@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% macro delta(d) %}
+  {%- if d is none %}<span class="muted">–</span>
+  {%- elif d == 'in' %}<span class="up">entré</span>
+  {%- elif d == 'out' %}<span class="down">sorti</span>
+  {%- elif d == 0 %}<span class="muted">=</span>
+  {%- elif d > 0 %}<span class="up">▲ {{ '%g' % d }}</span>
+  {%- else %}<span class="down">▼ {{ '%g' % (-d) }}</span>{% endif -%}
+{% endmacro %}
+{% block head %}{% if status.running %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
+{% block body %}
+<div class="bar">
+  <h1>Suivi de positions</h1>
+  <form method="post" action="{{ url_for('check', pid=project.id) }}">
+    <button {{ 'disabled' if status.running or not rows }}>Relever maintenant</button>
+  </form>
+  <a class="btn ghost" href="{{ url_for('export_positions', pid=project.id) }}">Exporter CSV</a>
+</div>
+{% if status.running %}<div class="flash">Relevé en cours : {{ status.done }} / {{ status.total }} mots-clés…</div>{% endif %}
+
+{% if rows %}
+<div class="stats">
+  <div><b>{{ kpi.n }}</b><span>mots-clés suivis</span></div>
+  <div><b>{{ kpi.avg if kpi.avg is not none else '–' }}</b><span>position moyenne</span></div>
+  <div><b>{{ kpi.top3 }}</b><span>dans le top 3</span></div>
+  <div><b>{{ kpi.top10 }}</b><span>dans le top 10</span></div>
+  <div><b>{{ kpi.out }}</b><span>hors top {{ top }}</span></div>
+  <div><b class="up">▲ {{ kpi.up }}</b><span>en hausse</span></div>
+  <div><b class="down">▼ {{ kpi.down }}</b><span>en baisse</span></div>
+</div>
+{% endif %}
+
+<section class="card">
+  <div class="bar">
+    <h2>Évolution{% if sel_kw %} : {{ sel_kw.keyword }} ({{ sel_kw.engine }}){% endif %}</h2>
+    <span class="muted">
+      {% for d, l in [(30,'30 j'),(90,'90 j'),(365,'1 an')] %}
+      <a href="{{ url_for('positions', pid=project.id, days=d, kw=sel) }}" class="{{ 'on' if days == d else '' }}">{{ l }}</a>
+      {% endfor %}
+      {% if sel %}· <a href="{{ url_for('positions', pid=project.id, days=days) }}">tous les mots-clés</a>{% endif %}
+    </span>
+  </div>
+  <div id="chart"></div>
+  <script>lineChart(document.getElementById('chart'), {{ series|tojson }}, {invert: true});</script>
+</section>
+
+{% if sel_kw and serp %}
+<details class="issue" open>
+  <summary>Page de résultats du {{ serp[0].date }} <b>{{ serp|length }} résultats</b></summary>
+  <table>
+    <tr><th class="num">#</th><th>Domaine</th><th>URL</th></tr>
+    {% for s in serp %}
+    <tr class="{{ 'me' if s.domain == project.domain or s.domain.endswith('.' + project.domain) }}">
+      <td class="num">{{ s.position }}</td><td>{{ s.domain }}</td>
+      <td class="url"><a href="{{ s.url }}" target="_blank" rel="noopener">{{ s.url }}</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+</details>
+{% endif %}
+
+{% if rows %}
+<table>
+  <tr><th>Mot-clé</th><th>Moteur</th><th class="num">Position</th><th class="num">1 j</th><th class="num">7 j</th>
+      <th class="num">30 j</th><th class="num">Meilleure</th><th>Page classée</th><th>Dernier relevé</th><th></th></tr>
+  {% for r in rows %}
+  <tr>
+    <td><a href="{{ url_for('positions', pid=project.id, kw=r.k.id, days=days) }}">{{ r.k.keyword }}</a></td>
+    <td>{{ r.k.engine }}</td>
+    <td class="num">
+      {% if not r.last %}<span class="muted">–</span>
+      {% elif r.last.position is none %}<span class="muted">hors top {{ top }}</span>
+      {% else %}<b>{{ '%g' % r.last.position }}</b>{% endif %}
+    </td>
+    <td class="num">{{ delta(r.d1) }}</td>
+    <td class="num">{{ delta(r.d7) }}</td>
+    <td class="num">{{ delta(r.d30) }}</td>
+    <td class="num">{{ '%g' % r.best if r.best is not none else '–' }}</td>
+    <td class="url">{{ r.last.url if r.last and r.last.url else '' }}</td>
+    <td>{% if r.k.last_error %}<span class="down" title="{{ r.k.last_error }}">échec ⓘ</span>
+        {% else %}{{ r.last.date if r.last else 'en attente' }}{% endif %}</td>
+    <td class="num"><form method="post" action="{{ url_for('keyword_delete', pid=project.id, kid=r.k.id) }}"><button class="link danger" title="Retirer du suivi">✕</button></form></td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">Aucun mot-clé suivi. Listez-les ci-dessous : le suivi démarre tout de suite.</p>
+{% endif %}
+
+<section class="card">
+  <h2>Ajouter des mots-clés</h2>
+  <form method="post" action="{{ url_for('keywords_add', pid=project.id) }}">
+    <textarea name="keywords" rows="5" placeholder="Un mot-clé par ligne" required></textarea>
+    <div class="row">
+      <label>Moteur
+        <select name="engine">
+          {% for n, label, ok in engines %}<option value="{{ n }}" {{ 'selected' if n == default_engine }}>{{ label }}{{ '' if ok else ' (non installé)' }}</option>{% endfor %}
+        </select></label>
+      <button>Suivre</button>
+    </div>
+  </form>
+  <p class="muted small">Dès l'ajout, le premier relevé part tout seul, puis une position est enregistrée chaque jour (top {{ top }}) tant que l'outil est ouvert. Cliquez sur un mot-clé pour voir sa courbe et la page de résultats complète.</p>
+</section>
+{% endblock %}

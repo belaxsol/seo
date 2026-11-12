@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>Tendances</h1>
+
+<section class="card">
+  <h2>Intérêt dans le temps</h2>
+  <div id="chart"></div>
+  <script>lineChart(document.getElementById('chart'), {{ series|tojson }}, {});</script>
+  {% if names %}
+  <form method="get" class="row">
+    {% for n in names %}<label class="check"><input type="checkbox" name="k" value="{{ n }}" {{ 'checked' if n in chosen }}> {{ n }}</label>{% endfor %}
+    <button class="ghost">Afficher</button>
+  </form>
+  <p class="muted small">Échelle Google Trends de 0 à 100. Chaque mot-clé a sa propre échelle : la forme des courbes se compare (saisonnalité, hausse, baisse), pas leur hauteur.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Ajouter des mots-clés</h2>
+  <form method="post" action="{{ url_for('trends_fetch', pid=project.id) }}">
+    <div class="row">
+      <input name="keywords" placeholder="Jusqu'à 5 mots-clés, séparés par des virgules" required class="grow">
+      <label>Période <select name="period">
+        {% for v, l in periods %}<option value="{{ v }}" {{ 'selected' if v == 'today 12-m' }}>{{ l }}</option>{% endfor %}
+      </select></label>
+      <button>Récupérer</button>
+    </div>
+  </form>
+  <p class="muted small">Les courbes sont récupérées sur Google Trends puis rafraîchies toutes seules chaque semaine. Google limite ces requêtes : en cas de refus, réessayez quelques minutes plus tard.</p>
+</section>
+
+{% if names %}
+<h2>Courbes enregistrées</h2>
+<table>
+  {% for n in names %}
+  <tr><td>{{ n }}</td>
+      <td class="num"><form method="post" action="{{ url_for('trends_delete', pid=project.id) }}">
+        <input type="hidden" name="keyword" value="{{ n }}"><button class="link danger">Supprimer</button></form></td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% endblock %}

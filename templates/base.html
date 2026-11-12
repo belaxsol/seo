@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}SEO Libre{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<script src="{{ url_for('static', filename='chart.js') }}"></script>
+{% block head %}{% endblock %}
+</head>
+<body>
+<header>
+  <a class="brand" href="{{ url_for('index') }}">SEO Libre</a>
+  {% if project %}
+  <span class="proj">{{ project.name }} · {{ project.domain }} · {{ project.lang }}-{{ project.country }}</span>
+  <nav>
+    {% for key, label in [('positions','Positions'),('competitors','Concurrents'),('ideas','Mots-clés'),('trends','Tendances'),('audit','Audit du site')] %}
+    <a href="{{ url_for(key, pid=project.id) }}" class="{{ 'on' if tab == key else '' }}">{{ label }}</a>
+    {% endfor %}
+  </nav>
+  {% endif %}
+</header>
+<main>
+  {% for m in get_flashed_messages() %}<div class="flash">{{ m }}</div>{% endfor %}
+  {% block body %}{% endblock %}
+</main>
+</body>
+</html>

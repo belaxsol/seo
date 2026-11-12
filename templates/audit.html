@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block head %}{% if status.running %}<meta http-equiv="refresh" content="3">{% endif %}{% endblock %}
+{% block body %}
+<h1>Audit du site</h1>
+{% if status.running %}<div class="flash">Crawl en cours : {{ status.n }} page(s) explorée(s)…</div>{% endif %}
+{% if status.error %}<div class="flash">Dernier crawl : {{ status.error }}</div>{% endif %}
+
+<div class="grid2">
+<section class="card">
+  <h2>Crawler le site</h2>
+  <form method="post" action="{{ url_for('crawl_start', pid=project.id) }}">
+    <div class="row"><input name="url" value="https://{{ project.domain }}/" class="grow"></div>
+    <div class="row">
+      <label>Pages max <input type="number" name="max_pages" value="200" min="1" max="20000" style="width:6em"></label>
+      <label class="check"><input type="checkbox" name="robots" checked> Respecter robots.txt</label>
+      <button {{ 'disabled' if status.running }}>Lancer</button>
+    </div>
+  </form>
+  <p class="muted small">Le crawler intégré lit le HTML brut (pas de JavaScript). Pour un site en JavaScript ou très gros, crawlez avec Screaming Frog et importez.</p>
+</section>
+<section class="card">
+  <h2>Importer un crawl Screaming Frog</h2>
+  <form method="post" enctype="multipart/form-data" action="{{ url_for('import_sf', pid=project.id) }}">
+    <input type="file" name="file" accept=".csv" required>
+    <div class="row"><button>Importer</button></div>
+  </form>
+  <p class="muted small">Dans Screaming Frog : onglet « Internal », filtre « All » ou « HTML », bouton Export, format CSV (internal_all.csv).</p>
+</section>
+</div>
+
+{% if crawls %}
+<form method="get" class="row">
+  <label>Crawl affiché <select name="crawl" onchange="this.form.submit()">
+    {% for c in crawls %}<option value="{{ c.id }}" {{ 'selected' if current and c.id == current.id }}>{{ c.started|replace('T',' ') }} · {{ c.source }} · {{ c.pages }} pages</option>{% endfor %}
+  </select></label>
+</form>
+{% endif %}
+
+{% if current %}
+<div class="stats">
+  {% for label, key, c in [('URL au total','total',none),('en 200','c200',200),('en 301','c301',301),('en 302','c302',302),('en 404','c404',404)] %}
+  <a href="{{ url_for('audit', pid=project.id, crawl=current.id, code=c) }}#pages" class="{{ 'sel' if code == c and c is not none }}">
+    <b class="{{ 'down' if key == 'c404' and stats[key] }}">{{ stats[key] }}</b><span>{{ label }}</span></a>
+  {% endfor %}
+  <div><b>{{ stats.other }}</b><span>autres codes</span></div>
+</div>
+
+<h2>Redirections et erreurs ({{ nproblems }})</h2>
+{% if problems %}
+<div class="scroll">
+<table>
+  <tr><th class="num">Code</th><th>URL</th><th>Redirige vers</th><th class="num">Liens entrants</th><th>Pages qui font le lien</th></tr>
+  {% for p in problems %}
+  {% set src = sources.get(p.url) %}
+  <tr>
+    <td class="num {{ 'down' if p.status == 0 or p.status >= 400 }}">{{ p.status or 'injoignable' }}</td>
+    <td class="url"><a href="{{ p.url }}" target="_blank" rel="noopener">{{ p.url }}</a></td>
+    <td class="url">{{ p.redirect_to or '' }}</td>
+    <td class="num">{{ p.inlinks if p.inlinks is not none else '–' }}</td>
+    <td class="url">
+      {% if src %}<details><summary>{{ src|length }} page(s)</summary>
+        {% for u in src[:50] %}<div><a href="{{ u }}" target="_blank" rel="noopener">{{ u }}</a></div>{% endfor %}
+        {% if src|length > 50 %}<div class="muted">… et {{ src|length - 50 }} autres</div>{% endif %}</details>
+      {% elif current.source != 'crawl' and p.inlinks %}<span class="muted">détail absent de l'export</span>
+      {% else %}<span class="muted">aucune</span>{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+{% if nproblems > problems|length %}<p class="muted">Les {{ problems|length }} premières sont affichées.</p>{% endif %}
+{% else %}<p class="muted">Aucune redirection ni erreur : toutes les URL répondent en 200.</p>{% endif %}
+
+<h2>Problèmes détectés</h2>
+{% if issues %}
+{% for sev, label, urls in issues %}
+<details class="issue">
+  <summary><span class="sev {{ sev }}">{{ sev }}</span> {{ label }} <b>{{ urls|length }}</b></summary>
+  <ul>{% for u in urls[:300] %}<li><a href="{{ u }}" target="_blank" rel="noopener">{{ u }}</a></li>{% endfor %}
+  {% if urls|length > 300 %}<li class="muted">… et {{ urls|length - 300 }} autres</li>{% endif %}</ul>
+</details>
+{% endfor %}
+{% else %}<p class="muted">Aucun problème détecté par les règles actuelles.</p>{% endif %}
+
+<h2 id="pages">Pages{% if code is not none %} en {{ code }}{% endif %}{% if npages > pages|length %} (les {{ pages|length }} premières sur {{ npages }}){% endif %}{% if code is not none %} · <a href="{{ url_for('audit', pid=project.id, crawl=current.id) }}#pages">tout afficher</a>{% endif %}</h2>
+<div class="scroll">
+<table>
+  <tr><th>URL</th><th class="num">Code</th><th>Title</th><th>H1</th><th class="num">Mots</th>
+      <th class="num">Prof.</th><th class="num">Liens entrants</th><th class="num">ms</th></tr>
+  {% for p in pages %}
+  <tr>
+    <td class="url"><a href="{{ p.url }}" target="_blank" rel="noopener">{{ p.url }}</a></td>
+    <td class="num {{ 'down' if p.status == 0 or p.status >= 400 }}">{{ p.status or 'injoignable' }}</td>
+    <td class="clip">{{ p.title or '' }}</td><td class="clip">{{ p.h1 or '' }}</td>
+    <td class="num">{{ p.word_count if p.word_count is not none else '' }}</td>
+    <td class="num">{{ p.depth if p.depth is not none else '' }}</td>
+    <td class="num">{{ p.inlinks if p.inlinks is not none else '' }}</td>
+    <td class="num">{{ p.response_ms if p.response_ms is not none else '' }}</td>
+  </tr>
+  {% endfor %}
+</table>
+</div>
+<form method="post" action="{{ url_for('crawl_delete', pid=project.id, cid=current.id) }}" onsubmit="return confirm('Supprimer ce crawl ?')">
+  <button class="link danger">Supprimer ce crawl</button>
+</form>
+{% elif not status.running %}
+<p class="muted">Aucun crawl pour l'instant.</p>
+{% endif %}
+{% endblock %}

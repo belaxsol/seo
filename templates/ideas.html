@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="bar">
+  <h1>Recherche de mots-clés</h1>
+  <a class="btn ghost" href="{{ url_for('export_keywords', pid=project.id) }}">Exporter CSV</a>
+</div>
+
+<section class="card">
+  <h2>Trouver des idées</h2>
+  <form method="post" action="{{ url_for('ideas_fetch', pid=project.id) }}">
+    <div class="row">
+      <input name="seed" placeholder="Mot-clé de départ, ex. chaussures running" required class="grow">
+      <button>Chercher</button>
+    </div>
+    <div class="row">
+      {% for n, label in sources %}<label class="check"><input type="checkbox" name="source" value="{{ n }}" checked> {{ label }}</label>{% endfor %}
+      <label class="check"><input type="checkbox" name="deep"> Approfondi (a → z + questions, environ 30 s)</label>
+    </div>
+  </form>
+  <p class="muted small">Ce sont les requêtes que Google et Bing proposent réellement aux internautes. Un mot-clé proposé par les deux moteurs remonte en tête de liste. Pour juger de sa popularité, regardez sa courbe dans l'onglet Tendances.</p>
+</section>
+
+<form method="get" class="row">
+  <input name="q" value="{{ f }}" placeholder="Filtrer la liste…">
+  <button class="ghost">Filtrer</button>
+  <span class="muted">{{ rows|length }} affiché(s) sur {{ total }}</span>
+</form>
+
+{% if rows %}
+<form method="post" action="{{ url_for('keywords_add', pid=project.id) }}">
+<table>
+  <tr><th><input type="checkbox" onclick="document.querySelectorAll('input[name=kw]').forEach(c => c.checked = this.checked)"></th>
+      <th>Mot-clé</th><th>Proposé par</th></tr>
+  {% for r in rows %}
+  <tr>
+    <td><input type="checkbox" name="kw" value="{{ r.keyword }}"></td>
+    <td>{{ r.keyword }}</td><td class="muted">{{ r.sources }}</td>
+  </tr>
+  {% endfor %}
+</table>
+<div class="row sticky">
+  <label>Moteur <select name="engine">
+    {% for n, label, ok in engines %}<option value="{{ n }}" {{ 'selected' if n == default_engine }}>{{ label }}{{ '' if ok else ' (non installé)' }}</option>{% endfor %}
+  </select></label>
+  <button>Suivre la sélection</button>
+</div>
+</form>
+<form method="post" action="{{ url_for('ideas_clear', pid=project.id) }}" onsubmit="return confirm('Vider toute la liste de mots-clés ?')">
+  <button class="link danger">Vider la liste</button>
+</form>
+{% else %}
+<p class="muted">Aucun mot-clé pour l'instant.</p>
+{% endif %}
+{% endblock %}

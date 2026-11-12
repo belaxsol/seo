@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>Concurrents</h1>
+{% if rows %}
+<p class="muted">Domaines présents sur vos {{ nkw }} mots-clés relevés (dernier relevé de chacun, top {{ top }}). Votre site est surligné.</p>
+<table>
+  <tr><th>Domaine</th><th class="num">Mots-clés en commun</th><th class="num">Part</th><th class="num">Position moyenne</th>
+      <th class="num">Top 3</th><th class="num">Top 10</th></tr>
+  {% for r in rows %}
+  <tr class="{{ 'me' if r.me }}">
+    <td>{{ r.domain }}</td><td class="num">{{ r.nkw }}</td><td class="num">{{ r.share }} %</td>
+    <td class="num">{{ r.avg }}</td><td class="num">{{ r.top3 }}</td><td class="num">{{ r.top10 }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">Pas encore de données : la liste se remplit après le premier relevé de positions.</p>
+{% endif %}
+{% endblock %}
