@@ -63,6 +63,24 @@ def start_checks(pid=None, only_missing=False):
     return True
 
 
+# Part de clics estimée par position (courbe CTR moyenne du marché).
+CTR = {1: 30, 2: 15, 3: 10, 4: 7, 5: 5, 6: 4, 7: 3, 8: 2.5, 9: 2, 10: 1.8}
+
+
+def ctr(position):
+    if position is None:
+        return 0.0
+    p = int(position)
+    return CTR.get(p, 1.0 if p <= 20 else 0.3 if p <= 30 else 0.0)
+
+
+def visibility(positions):
+    """Indice de visibilité 0-100 : plus c'est haut, mieux c'est (100 = tout en position 1)."""
+    if not positions:
+        return None
+    return round(sum(ctr(p) for p in positions) / len(positions) / CTR[1] * 100, 1)
+
+
 def _delta(ref, last):
     """Écart de position entre deux relevés (positif = progression)."""
     if not ref or not last:
@@ -142,7 +160,8 @@ def positions(pid):
                            "points": [[r["date"], r["position"]] for r in h if r["date"] >= since]})
     pos = [r["last"]["position"] for r in rows if r["last"] and r["last"]["position"] is not None]
     moved = [r["d1"] for r in rows]
-    kpi = {"n": len(rows), "avg": round(sum(pos) / len(pos), 1) if pos else None,
+    checked = [r["last"]["position"] for r in rows if r["last"]]
+    kpi = {"n": len(rows), "visibility": visibility(checked), "avg": round(sum(pos) / len(pos), 1) if pos else None,
            "top3": sum(1 for p in pos if p <= 3), "top10": sum(1 for p in pos if p <= 10),
            "out": sum(1 for r in rows if r["last"] and r["last"]["position"] is None),
            "up": sum(1 for d in moved if d == "in" or (isinstance(d, (int, float)) and d > 0)),
@@ -203,8 +222,13 @@ def keyword_delete(pid, kid):
 @app.post("/p/<int:pid>/check")
 def check(pid):
     get_project(pid)
-    if start_checks(pid):
-        flash("Relevé lancé : la page se met à jour toute seule.")
+    todo = db.q("SELECT 1 FROM keywords k WHERE k.project_id = ? AND NOT EXISTS "
+                "(SELECT 1 FROM ranks r WHERE r.keyword_id = k.id AND r.date = ?)",
+                (pid, dt.date.today().isoformat()))
+    if not todo:
+        flash("Tous les mots-clés ont déjà été relevés aujourd'hui.")
+    elif start_checks(pid, only_missing=True):
+        flash("Relevé lancé pour les mots-clés pas encore relevés aujourd'hui.")
     else:
         flash("Un relevé est déjà en cours.")
     return redirect(url_for("positions", pid=pid))

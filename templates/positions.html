@@ -21,6 +21,7 @@
 {% if rows %}
 <div class="stats">
   <div><b>{{ kpi.n }}</b><span>mots-clés suivis</span></div>
+  <div title="100 % = tous vos mots-clés en position 1. Estimation de la part de clics captée, sans volumes de recherche."><b>{{ (kpi.visibility ~ ' %') if kpi.visibility is not none else '–' }}</b><span>visibilité (plus c'est haut, mieux c'est)</span></div>
   <div><b>{{ kpi.avg if kpi.avg is not none else '–' }}</b><span>position moyenne</span></div>
   <div><b>{{ kpi.top3 }}</b><span>dans le top 3</span></div>
   <div><b>{{ kpi.top10 }}</b><span>dans le top 10</span></div>

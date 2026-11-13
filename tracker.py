@@ -96,6 +96,8 @@ def run_checks(project_id=None, only_missing=False):
                     errors[k["engine"]] = errors.get(k["engine"], 0) + 1
                 if n < len(rows) - 1:
                     time.sleep(random.uniform(4, 9))  # rester discret
+            if err and db.q("SELECT 1 FROM ranks WHERE keyword_id=? AND date=?", (k["id"], today)):
+                err = None  # déjà relevé aujourd'hui : un échec ultérieur ne l'annule pas
             db.x("UPDATE keywords SET last_checked=?, last_error=? WHERE id=?", (now, err, k["id"]))
             STATUS["done"] = n + 1
     finally:

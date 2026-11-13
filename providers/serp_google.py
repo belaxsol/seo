@@ -10,6 +10,7 @@ la fenêtre du navigateur s'affiche et vous pouvez le résoudre à la main
 """
 import os
 import random
+import re
 from urllib.parse import quote_plus, urlparse
 
 from ._http import UA, ProviderError
@@ -29,6 +30,30 @@ def available():
         return True
     except ImportError:
         return False
+
+
+def _real_url(href, text):
+    """URL réelle du résultat : le lien direct, ou (redirection google.com/goto) l'adresse
+    affichée sous le titre (« https://domaine › chemin »)."""
+    if href.startswith("http") and "google." not in urlparse(href).netloc:
+        return href
+    m = re.search(r"https?://[^\s›]+(?:\s›\s[^\n›]+)*", text or "")
+    if not m:
+        return None
+    url = re.sub(r"\s›\s", "/", m.group(0)).replace("…", "").strip()
+    return url if "google." not in urlparse(url).netloc else None
+
+
+def _accept_overlay(page):
+    """Accepte la fenêtre de consentement superposée (même URL, sans page consent.)."""
+    page.wait_for_timeout(1500)
+    btn = page.locator("button:has-text('Tout accepter'), button:has-text('Accept all')")
+    if btn.count():
+        try:
+            btn.first.click(timeout=4000)
+            page.wait_for_timeout(1500)
+        except Exception:
+            pass
 
 
 def search(query, lang="fr", country="FR", max_results=30):
@@ -58,7 +83,15 @@ def search(query, lang="fr", country="FR", max_results=30):
                                      "button:has-text('Accept all')").first.click(timeout=4000)
                         page.wait_for_load_state("domcontentloaded")
                     except Exception:
-                        raise ProviderError("Page de consentement Google non franchie")
+                        if not visible:
+                            raise ProviderError("Page de consentement Google non franchie : "
+                                                "relancez avec SEOLIBRE_GOOGLE_VISIBLE=1")
+                        # Fenêtre visible : on laisse l'utilisateur accepter à la main.
+                        try:
+                            page.wait_for_url(lambda u: "consent." not in u, timeout=180000)
+                        except Exception:
+                            raise ProviderError("Consentement Google non accepté dans les 3 minutes")
+                _accept_overlay(page)
                 if "/sorry/" in page.url:
                     if not visible:
                         raise ProviderError("Google demande un captcha. Relancez avec "
@@ -68,11 +101,18 @@ def search(query, lang="fr", country="FR", max_results=30):
                     except Exception:
                         raise ProviderError("Captcha Google non résolu dans les 3 minutes")
                 page.wait_for_timeout(random.randint(1500, 3500))
-                hrefs = page.eval_on_selector_all("a:has(h3)", "els => els.map(e => e.href)")
+                if visible and not page.query_selector("a:has(h3)"):
+                    # Bandeau de consentement ou page inattendue : attendre l'utilisateur.
+                    try:
+                        page.wait_for_selector("a:has(h3)", timeout=180000)
+                    except Exception:
+                        pass
+                items = page.eval_on_selector_all(
+                    "a:has(h3)", "els => els.map(e => [e.href, e.innerText])")
                 found = 0
-                for h in hrefs:
-                    host = urlparse(h).netloc
-                    if h.startswith("http") and "google." not in host and h not in urls:
+                for href, text in items:
+                    h = _real_url(href, text)
+                    if h and h not in urls:
                         urls.append(h)
                         found += 1
                 if not found:
