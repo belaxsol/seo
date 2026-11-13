@@ -117,8 +117,16 @@ def search(query, lang="fr", country="FR", max_results=30):
                         found += 1
                 if not found:
                     break
+        except ProviderError:
+            raise
+        except Exception as e:  # fenêtre fermée, navigateur planté, page qui ne charge pas
+            raise ProviderError("Le navigateur a été fermé ou a planté pendant le relevé (en mode "
+                                "visible, ne fermez pas la fenêtre Chromium) : " + str(e)[:80])
         finally:
-            ctx.close()
+            try:
+                ctx.close()
+            except Exception:
+                pass
     if not urls:
         raise ProviderError("Google n'a renvoyé aucun résultat lisible")
     return urls[:max_results]

@@ -227,8 +227,15 @@ def dashboard(pid):
                 count[d] += 1
                 best[d].append(p)
     nkw = len(serp)
-    rivals = [{"domain": d, "n": n, "share": round(100 * n / nkw), "avg": round(sum(best[d]) / n, 1)}
-              for d, n in sorted(count.items(), key=lambda x: (-x[1], x[0]))[:6]]
+    declared = declared_competitors(pid)
+    names = set(count) | set(declared)
+    cnt = {d: sum(n for x, n in count.items() if same_site(x, d)) if d in declared else count.get(d, 0)
+           for d in names}
+    rivals = [{"domain": d, "n": cnt[d], "share": round(100 * cnt[d] / nkw) if nkw else 0,
+               "avg": round(sum(best[d]) / count[d], 1) if count.get(d) else None,
+               "declared": d in declared}
+              for d in sorted((d for d in names if d in declared or not is_generic(d)),
+                              key=lambda d: (d not in declared, -cnt[d], d))[:6]]
     opps = []
     for kid, doms in serp.items():
         mine = [p for d, (p, _) in doms.items() if is_mine(d, project)]
@@ -329,9 +336,68 @@ def positions(pid):
                            status=tracker.STATUS, top=tracker.MAX_RESULTS)
 
 
+# Sites qui apparaissent partout sans être de vrais concurrents (emploi, réseaux, annuaires, institutions).
+GENERIC_DOMAINS = (
+    "indeed.com", "indeed.fr", "linkedin.com", "glassdoor.fr", "glassdoor.com", "welcometothejungle.com",
+    "hellowork.com", "apec.fr", "free-work.com", "malt.fr", "pole-emploi.fr", "francetravail.fr",
+    "pagesjaunes.fr", "mappy.com", "kompass.com", "societe.com", "pappers.fr", "infogreffe.fr",
+    "wikipedia.org", "youtube.com", "facebook.com", "instagram.com", "twitter.com", "x.com",
+    "reddit.com", "quora.com", "pinterest.com", "tiktok.com", "oecd.org", "europa.eu",
+    "journaldunet.com", "commentcamarche.net", "lemonde.fr", "lesechos.fr", "lefigaro.fr",
+    "gouv.fr", "service-public.fr", "legifrance.gouv.fr",
+)
+
+
+def is_generic(domain):
+    return any(domain == g or domain.endswith("." + g) for g in GENERIC_DOMAINS)
+
+
+def same_site(domain, base):
+    return domain == base or domain.endswith("." + base)
+
+
+def declared_competitors(pid):
+    return [r["domain"] for r in db.q("SELECT domain FROM my_competitors WHERE project_id=? "
+                                      "ORDER BY domain", (pid,))]
+
+
+@app.post("/p/<int:pid>/competitors/add")
+def competitors_add(pid):
+    get_project(pid)
+    raw = request.form.get("domains", "").replace(",", "\n").replace(";", "\n").splitlines()
+    domains = {tracker.clean_domain(w) for w in raw if w.strip()}
+    domains = {d for d in domains if "." in d}
+    db.xmany("INSERT OR IGNORE INTO my_competitors(project_id, domain) VALUES(?,?)",
+             [(pid, d) for d in sorted(domains)])
+    flash(f"{len(domains)} concurrent(s) déclaré(s)." if domains else "Indiquez un domaine, par exemple attineos.com")
+    return redirect(url_for("competitors", pid=pid))
+
+
+@app.post("/p/<int:pid>/competitors/remove")
+def competitors_remove(pid):
+    get_project(pid)
+    db.x("DELETE FROM my_competitors WHERE project_id=? AND domain=?", (pid, request.form.get("domain", "")))
+    return redirect(url_for("competitors", pid=pid))
+
+
+@app.post("/p/<int:pid>/competitors/discover")
+def competitors_discover(pid):
+    """Explore le site du projet pour en tirer des sujets, puis relève Google dessus."""
+    project = get_project(pid)
+    if explore.STATUS.get(pid, {}).get("running") or tracker.STATUS["running"]:
+        flash("Un relevé est déjà en cours : attendez la fin.")
+    else:
+        threading.Thread(target=explore.run_many, args=(project, [project["domain"]], default_engine()),
+                         daemon=True).start()
+        time.sleep(0.3)
+    return redirect(url_for("competitors", pid=pid))
+
+
 @app.route("/p/<int:pid>/competitors")
 def competitors(pid):
     project = get_project(pid)
+    show_generic = request.args.get("generic") == "1"
+    declared = declared_competitors(pid)
     best = {}  # (domaine, mot-clé) -> meilleure position au dernier relevé
     for r in db.q("SELECT s.keyword_id, s.domain, MIN(s.position) AS pos FROM serp s "
                   "JOIN keywords k ON k.id = s.keyword_id WHERE k.project_id=? AND s.date = "
@@ -342,14 +408,49 @@ def competitors(pid):
     by = defaultdict(list)
     for (domain, _), p in best.items():
         by[domain].append(p)
-    rows = [{"domain": d, "nkw": len(ps), "share": round(100 * len(ps) / nkw),
-             "avg": round(sum(ps) / len(ps), 1), "top3": sum(1 for p in ps if p <= 3),
-             "top10": sum(1 for p in ps if p <= 10),
-             "me": d == project["domain"] or d.endswith("." + project["domain"])}
-            for d, ps in by.items()]
-    rows.sort(key=lambda r: (-r["nkw"], r["avg"]))
-    return render_template("competitors.html", project=project, tab="competitors",
-                           rows=rows[:60], nkw=nkw, top=tracker.MAX_RESULTS)
+
+    def row(d, ps):
+        return {"domain": d, "nkw": len(ps), "share": round(100 * len(ps) / nkw) if nkw else 0,
+                "avg": round(sum(ps) / len(ps), 1) if ps else None,
+                "top3": sum(1 for p in ps if p <= 3), "top10": sum(1 for p in ps if p <= 10),
+                "me": same_site(d, project["domain"]), "generic": is_generic(d),
+                "declared": any(same_site(d, c) for c in declared)}
+    rows = [row(d, ps) for d, ps in by.items()]
+    hidden = sum(1 for r in rows if r["generic"] and not r["me"] and not r["declared"])
+    if not show_generic:
+        rows = [r for r in rows if not r["generic"] or r["me"] or r["declared"]]
+    rows.sort(key=lambda r: (not r["declared"], -r["nkw"], r["avg"] or 999, r["domain"]))
+    # matrice mots-clés × concurrents déclarés (position, ou rien = hors top N)
+    kws = db.q("SELECT id, keyword FROM keywords WHERE project_id=? ORDER BY keyword", (pid,))
+    seen_kw = {k for _, k in best}
+    matrix = []
+    for k in kws:
+        if k["id"] not in seen_kw:
+            continue
+        cells = []
+        for c in declared:
+            ps = [p for (d, kid), p in best.items() if kid == k["id"] and same_site(d, c)]
+            cells.append(min(ps) if ps else None)
+        mine = [p for (d, kid), p in best.items() if kid == k["id"] and same_site(d, project["domain"])]
+        matrix.append({"k": k, "me": min(mine) if mine else None, "cells": cells})
+    drows = [row(c, [p for (d, _), p in best.items() if same_site(d, c)]) for c in declared]
+    # concurrents probables : domaines les plus présents sur les sujets tirés de votre propre site
+    seen, nprobe = defaultdict(list), set()
+    for r in db.q("SELECT keyword, domain, MIN(position) AS pos FROM probe_serp WHERE project_id=? "
+                  "GROUP BY keyword, domain", (pid,)):
+        nprobe.add(r["keyword"])
+        if not same_site(r["domain"], project["domain"]) and not is_generic(r["domain"]):
+            seen[r["domain"]].append(r["pos"])
+    probable = sorted(({"domain": d, "n": len(ps), "avg": round(sum(ps) / len(ps), 1),
+                        "top10": sum(1 for p in ps if p <= 10),
+                        "declared": any(same_site(d, c) for c in declared)}
+                       for d, ps in seen.items()),
+                      key=lambda r: (-r["n"], r["avg"], r["domain"]))[:15]
+    return render_template("competitors.html", probable=probable, nprobe=len(nprobe),
+                           xstatus=explore.STATUS.get(pid), project=project, tab="competitors",
+                           rows=rows[:100], nkw=nkw, top=tracker.MAX_RESULTS, declared=declared,
+                           drows=drows, matrix=matrix, show_generic=show_generic, hidden=hidden,
+                           ntotal=len(rows))
 
 
 @app.route("/p/<int:pid>/gap")
@@ -369,8 +470,13 @@ def gap(pid):
         for d in doms:
             if not is_mine(d, project):
                 count[d] += 1
-    rivals = sorted(count, key=lambda d: (-count[d], d))[:30]
+    declared = declared_competitors(pid)
+    others = [d for d in sorted(count, key=lambda d: (-count[d], d))
+              if d not in declared and not is_generic(d)][:30]
+    rivals = declared + others
     comp = request.args.get("c") or (rivals[0] if rivals else None)
+    if comp and comp not in rivals:
+        rivals.insert(0, comp)  # lien direct vers un domaine absent de la liste
     kws = {k["id"]: k for k in db.q("SELECT id, keyword, engine FROM keywords WHERE project_id=?", (pid,))}
     rows = []
     for kid, doms in serp.items():
@@ -389,15 +495,22 @@ def gap(pid):
     probes = []
     for r in db.q("SELECT * FROM gap_probe WHERE project_id=? AND competitor=? AND comp_pos IS NOT NULL "
                   "ORDER BY keyword", (pid, comp)):
-        if r["my_pos"] is None or r["my_pos"] > r["comp_pos"]:
-            probes.append(r)
-    probes.sort(key=lambda r: (r["my_pos"] is not None, r["comp_pos"]))
+        probes.append({**dict(r), "ahead": r["my_pos"] is None or r["my_pos"] > r["comp_pos"]})
+    probes.sort(key=lambda r: (r["comp_pos"], r["keyword"]))
+    # tous les candidats testés (même non classés), pour suivre l'exploration en direct
+    tested = []
+    for r in db.q("SELECT keyword, my_pos, comp_pos FROM gap_probe WHERE project_id=? AND competitor=? "
+                  "ORDER BY rowid", (pid, comp)):
+        top = db.one("SELECT domain FROM probe_serp WHERE project_id=? AND keyword=? ORDER BY position LIMIT 1",
+                     (pid, r["keyword"]))
+        tested.append({**dict(r), "leader": top["domain"] if top else None})
     probed = db.one("SELECT COUNT(*) c, MAX(date) d FROM gap_probe WHERE project_id=? AND competitor=?",
                     (pid, comp))
     return render_template("gap.html", project=project, tab="gap", rows=rows, rivals=rivals,
-                           probes=probes, probed=probed, xstatus=explore.STATUS.get(pid),
+                           probes=probes, probed=probed, tested=tested, xstatus=explore.STATUS.get(pid),
                            engine=default_engine(),
                            count=count, comp=comp, shared=count.get(comp, 0), ahead=ahead,
+                           declared=declared,
                            top=tracker.MAX_RESULTS)
 
 
@@ -427,11 +540,12 @@ def market(pid):
     show_all = request.args.get("all") == "1"
     data = {}  # mot-clé -> {"me": position, "rivals": {domaine: (position, url)}}
     explored = {r["competitor"] for r in db.q(
-        "SELECT DISTINCT competitor FROM gap_probe WHERE project_id=?", (pid,))}
+        "SELECT DISTINCT competitor FROM gap_probe WHERE project_id=?", (pid,))
+        if not same_site(r["competitor"], project["domain"])}
     for r in db.q("SELECT keyword, my_pos, competitor, comp_pos, comp_url FROM gap_probe "
                   "WHERE project_id=?", (pid,)):
         e = data.setdefault(r["keyword"], {"me": r["my_pos"], "rivals": {}})
-        if r["comp_pos"] is not None:
+        if r["comp_pos"] is not None and not same_site(r["competitor"], project["domain"]):
             e["rivals"][r["competitor"]] = (r["comp_pos"], r["comp_url"])
     for r in db.q("SELECT keyword, position, url, domain FROM probe_serp WHERE project_id=? "
                   "ORDER BY position", (pid,)):
@@ -463,7 +577,10 @@ def market(pid):
                   "WHERE keyword_id = s.keyword_id)", (pid,)):
         if not is_mine(r["domain"], project):
             count[r["domain"]] += 1
-    todo = [d for d, _ in sorted(count.items(), key=lambda x: (-x[1], x[0])) if d not in explored][:12]
+    declared = declared_competitors(pid)
+    todo = [d for d in declared if d not in explored] + [
+        d for d, _ in sorted(count.items(), key=lambda x: (-x[1], x[0]))
+        if d not in explored and d not in declared and not is_generic(d)][:12]
     return render_template("market.html", project=project, tab="market", by=by, show_all=show_all,
                            rows=rows, comps=comps, explored=explored, todo=todo, count=count,
                            nprobed=len(data), xstatus=explore.STATUS.get(pid),

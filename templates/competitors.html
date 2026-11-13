@@ -1,18 +1,90 @@
 {% extends "base.html" %}
 {% block body %}
 <h1>Concurrents</h1>
+<p class="muted lead">Vos vrais concurrents ne sont pas forcément ceux que Google affiche sur vos mots-clés : déclarez-les ici pour voir où ils se placent, même quand ils ne sont pas dans le top {{ top }}.</p>
+
+{% if xstatus and xstatus.running %}<meta http-equiv="refresh" content="10">
+<div class="flash"><b>{{ xstatus.phase }}</b> pour {{ xstatus.competitor }}{% if xstatus.total %} : {{ xstatus.done }} / {{ xstatus.total }}{% endif %}. La page se rafraîchit toute seule.</div>
+{% elif xstatus and xstatus.error and xstatus.competitor == project.domain %}<div class="flash down">{{ xstatus.error }}</div>{% endif %}
+
+<section class="panel" style="margin:14px 0">
+  <h2>Trouver mes concurrents</h2>
+  <p class="muted" style="margin-top:0">Vous ne les connaissez pas ? L'outil lit <b>votre site</b>, en tire les sujets sur lesquels vous voulez être visible,
+    relève Google (résultats nationaux) sur ces sujets et classe les sites qui reviennent le plus, hors annuaires, réseaux et sites d'emploi.
+    Environ 25 requêtes Google, 4 à 5 minutes.</p>
+  <form method="post" action="{{ url_for('competitors_discover', pid=project.id) }}">
+    <button {{ 'disabled' if xstatus and xstatus.running }}>{{ 'Relancer la recherche' if nprobe else 'Trouver mes concurrents' }}</button>
+    {% if nprobe %}<span class="muted">{{ nprobe }} sujets analysés.</span>{% endif %}
+  </form>
+  {% if probable %}
+  <table>
+    <tr><th>Site probablement concurrent</th><th class="num">Sujets en commun</th><th class="num">Position moyenne</th><th class="num">Top 10</th><th></th></tr>
+    {% for r in probable %}
+    <tr>
+      <td><a href="https://{{ r.domain }}" target="_blank" rel="noopener">{{ r.domain }}</a></td>
+      <td class="num">{{ r.n }}</td><td class="num">{{ r.avg }}</td><td class="num">{{ r.top10 }}</td>
+      <td class="num">{% if r.declared %}<span class="muted">suivi ✓</span>{% else %}
+        <form method="post" action="{{ url_for('competitors_add', pid=project.id) }}" style="display:inline">
+          <input type="hidden" name="domains" value="{{ r.domain }}"><button class="ghost">Suivre</button></form>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="muted small-inline">Cliquez sur « Suivre » pour ajouter un site à vos concurrents : il apparaîtra dans le tableau ci-dessous avec sa position sur vos mots-clés.</p>
+  {% endif %}
+</section>
+
+<section class="panel" style="margin:14px 0">
+  <h2>Vos concurrents</h2>
+  <form method="post" action="{{ url_for('competitors_add', pid=project.id) }}" class="row">
+    <input name="domains" placeholder="attineos.com, wixiweb.com…" class="grow">
+    <button>Ajouter</button>
+  </form>
+  {% if declared %}
+  <div class="row">
+    {% for c in declared %}
+    <form method="post" action="{{ url_for('competitors_remove', pid=project.id) }}" style="display:inline">
+      <input type="hidden" name="domain" value="{{ c }}">
+      <em class="tag alt">{{ c }} <button class="link danger" title="Retirer" style="font-size:12px">✕</button></em>
+    </form>
+    {% endfor %}
+  </div>
+  {% if matrix %}
+  <div class="scroll"><table>
+    <tr><th>Mot-clé</th><th class="num">{{ project.domain }}</th>{% for c in declared %}<th class="num">{{ c }}</th>{% endfor %}</tr>
+    {% for m in matrix %}
+    <tr>
+      <td>{{ m.k.keyword }}</td>
+      {% for p in [m.me] + m.cells %}
+      <td class="num">{% if p %}<span class="pos {{ 'p1' if p <= 3 else 'p2' if p <= 10 else 'p3' if p <= 20 else 'p4' }}">{{ '%g' % p }}</span>{% else %}<span class="muted">hors top {{ top }}</span>{% endif %}</td>
+      {% endfor %}
+    </tr>
+    {% endfor %}
+  </table></div>
+  <p class="muted small-inline">Position de chaque site sur vos mots-clés suivis, au dernier relevé. Pour trouver les mots-clés où un concurrent est positionné, explorez son site depuis <a href="{{ url_for('market', pid=project.id) }}">Mots-clés concurrents</a>.</p>
+  {% endif %}
+  {% else %}<p class="muted">Aucun concurrent déclaré pour l'instant.</p>{% endif %}
+</section>
+
 {% if rows %}
-<p class="muted">Domaines présents sur vos {{ nkw }} mots-clés relevés (dernier relevé de chacun, top {{ top }}). Votre site est surligné.</p>
+<div class="bar">
+  <h2 class="grow" style="margin:0">Tous les domaines présents sur vos mots-clés</h2>
+  <a class="btn ghost" href="{{ url_for('competitors', pid=project.id, generic=None if show_generic else 1) }}">
+    {{ 'Masquer annuaires, réseaux et sites d\'emploi' if show_generic else 'Afficher aussi annuaires, réseaux et sites d\'emploi (' ~ hidden ~ ' masqués)' }}</a>
+</div>
+<p class="muted">Domaines présents sur vos {{ nkw }} mots-clés relevés (dernier relevé de chacun, top {{ top }}). Votre site est surligné, vos concurrents déclarés aussi.</p>
 <table>
   <tr><th>Domaine</th><th class="num">Mots-clés en commun</th><th class="num">Part</th><th class="num">Position moyenne</th>
       <th class="num">Top 3</th><th class="num">Top 10</th></tr>
   {% for r in rows %}
-  <tr class="{{ 'me' if r.me }}">
-    <td>{% if r.me %}{{ r.domain }}{% else %}<a href="{{ url_for('gap', pid=project.id, c=r.domain) }}" title="Voir les mots-clés où il est devant vous">{{ r.domain }}</a>{% endif %}</td><td class="num">{{ r.nkw }}</td><td class="num">{{ r.share }} %</td>
-    <td class="num">{{ r.avg }}</td><td class="num">{{ r.top3 }}</td><td class="num">{{ r.top10 }}</td>
+  <tr class="{{ 'me' if r.me or r.declared }}">
+    <td>{% if r.me %}{{ r.domain }}{% else %}<a href="{{ url_for('gap', pid=project.id, c=r.domain) }}" title="Voir les mots-clés où il est devant vous">{{ r.domain }}</a>{% endif %}
+      {% if r.generic %}<em class="tag">annuaire / réseau</em>{% endif %}</td>
+    <td class="num">{{ r.nkw }}</td><td class="num">{{ r.share }} %</td>
+    <td class="num">{{ r.avg if r.avg is not none else '–' }}</td><td class="num">{{ r.top3 }}</td><td class="num">{{ r.top10 }}</td>
   </tr>
   {% endfor %}
 </table>
+{% if ntotal > rows|length %}<p class="muted">Les {{ rows|length }} premiers sur {{ ntotal }} sont affichés.</p>{% endif %}
 {% else %}
 <p class="muted">Pas encore de données : la liste se remplit après le premier relevé de positions.</p>
 {% endif %}

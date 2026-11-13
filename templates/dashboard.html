@@ -83,9 +83,9 @@
     {% if rivals %}
     {% for r in rivals %}
     <div class="bar-row">
-      <a class="name" href="{{ url_for('gap', pid=project.id, c=r.domain) }}" title="Voir les écarts avec {{ r.domain }}">{{ r.domain }}</a>
+      <a class="name" href="{{ url_for('gap', pid=project.id, c=r.domain) }}" title="Voir les écarts avec {{ r.domain }}">{{ r.domain }}{% if r.declared %} <em class="tag alt">suivi</em>{% endif %}</a>
       <div class="meter"><i style="width:{{ r.share }}%"></i></div>
-      <span class="muted">{{ r.n }}/{{ nkw }} · moy. {{ r.avg }}</span>
+      <span class="muted">{{ r.n }}/{{ nkw }}{% if r.avg is not none %} · moy. {{ r.avg }}{% else %} · hors top {{ top }}{% endif %}</span>
     </div>
     {% endfor %}
     <p class="muted more">Part de vos mots-clés où le domaine apparaît dans le top {{ top }}.</p>

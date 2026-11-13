@@ -21,7 +21,9 @@ STATUS = {}             # project_id -> {"running", "phase", "done", "total", "e
 
 SEPARATORS = re.compile(r"\s[|\-–—:·»]\s")
 GENERIC_START = {"nos", "notre", "mentions", "politique", "plan", "contact", "accueil", "à", "qui",
-                 "conditions", "cookies", "cgv", "cgu", "faq", "blog", "devis", "actualités"}
+                 "conditions", "cookies", "cgv", "cgu", "faq", "blog", "devis", "actualités", "toutes",
+                 "tous", "faisons", "des", "les", "la", "le", "l'", "un", "une", "rejoignez", "actus",
+                 "accélérez", "découvrez", "contactez", "votre", "vos", "notre", "nous", "bienvenue"}
 
 
 def candidates(pages, competitor, known):
@@ -35,7 +37,7 @@ def candidates(pages, competitor, known):
             part = SEPARATORS.split(text)[0].strip().lower()
             part = re.sub(r"\s+", " ", part)
             words = part.split()
-            if not 2 <= len(words) <= 8 or brand in part or words[0] in GENERIC_START:
+            if not 2 <= len(words) <= 5 or brand in part or words[0] in GENERIC_START:
                 continue
             if sum(c.isdigit() for c in part) > 3 or part in seen:
                 continue

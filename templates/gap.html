@@ -15,7 +15,7 @@
 <form method="get" class="inline">
   <label>Concurrent
     <select name="c" onchange="this.form.submit()">
-      {% for d in rivals %}<option value="{{ d }}" {{ 'selected' if d == comp }}>{{ d }} ({{ count[d] }} mots-clés)</option>{% endfor %}
+      {% for d in rivals %}<option value="{{ d }}" {{ 'selected' if d == comp }}>{{ d }}{% if d in declared %} ★{% endif %} ({{ count[d] }} mot{{ 's' if count[d] > 1 }}-clé{{ 's' if count[d] > 1 }})</option>{% endfor %}
     </select>
   </label>
   <noscript><button>Afficher</button></noscript>
@@ -39,6 +39,8 @@
   </tr>
   {% endfor %}
 </table>
+{% elif not shared %}
+<p class="muted">{{ comp }} n'est dans le top {{ top }} sur aucun de vos mots-clés suivis : il n'y a donc pas d'écart à afficher ici. Explorez son site ci-dessous pour trouver les mots-clés où il est positionné.</p>
 {% else %}
 <p class="muted">Sur les mots-clés où {{ comp }} est classé, vous êtes toujours devant lui.</p>
 {% endif %}
@@ -67,13 +69,14 @@
   <form method="post" action="{{ url_for('keywords_add', pid=project.id) }}">
     <input type="hidden" name="engine" value="{{ engine }}">
     <table>
-      <tr><th></th><th>Mot-clé candidat</th><th class="num">Votre position</th><th class="num">{{ comp }}</th><th>Sa page</th></tr>
+      <tr><th></th><th>Mots-clés où {{ comp }} est classé</th><th class="num">{{ comp }}</th><th class="num">Votre position</th><th>Qui est devant</th><th>Sa page</th></tr>
       {% for r in probes %}
       <tr>
         <td><input type="checkbox" name="kw" value="{{ r.keyword }}"></td>
         <td>{{ r.keyword }}</td>
+        <td class="num"><span class="pos {{ 'p1' if r.comp_pos <= 3 else 'p2' if r.comp_pos <= 10 else 'p3' if r.comp_pos <= 20 else 'p4' }}">{{ r.comp_pos }}</span></td>
         <td class="num">{% if r.my_pos %}<b>{{ r.my_pos }}</b>{% else %}<span class="muted">hors top {{ top }}</span>{% endif %}</td>
-        <td class="num"><b>{{ r.comp_pos }}</b></td>
+        <td>{% if r.ahead %}<span class="down">{{ comp }}</span>{% else %}<span class="up">Vous</span>{% endif %}</td>
         <td class="url"><a href="{{ r.comp_url }}" target="_blank" rel="noopener">{{ r.comp_url }}</a></td>
       </tr>
       {% endfor %}
@@ -81,8 +84,26 @@
     <button>Ajouter les mots-clés cochés au suivi</button>
   </form>
   {% else %}
-  <p class="muted">Parmi les {{ probed.c }} candidats testés, aucun où {{ comp }} est classé devant vous.</p>
+  <p class="muted">Parmi les {{ probed.c }} candidats testés, {{ comp }} n'est classé sur aucun.</p>
   {% endif %}
+  {% endif %}
+
+  {% if tested %}
+  <details class="soft" {{ 'open' if xstatus and xstatus.running }}>
+    <summary>Tous les mots-clés testés ({{ tested|length }}{% if xstatus and xstatus.running and xstatus.total %} sur {{ xstatus.total }}{% endif %})</summary>
+    <table class="flat">
+      <tr><th>Mot-clé testé</th><th class="num">{{ comp }}</th><th class="num">Vous</th><th>Premier résultat</th></tr>
+      {% for r in tested %}
+      <tr>
+        <td>{{ r.keyword }}</td>
+        <td class="num">{% if r.comp_pos %}<b>{{ r.comp_pos }}</b>{% else %}<span class="muted">non classé</span>{% endif %}</td>
+        <td class="num">{% if r.my_pos %}<b>{{ r.my_pos }}</b>{% else %}<span class="muted">non classé</span>{% endif %}</td>
+        <td class="muted">{{ r.leader or '' }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    <p class="muted small-inline">Ces mots-clés sont des intitulés de rubriques du site : beaucoup sont trop généraux pour que le concurrent s'y classe.</p>
+  </details>
   {% endif %}
 </section>
 {% endif %}
