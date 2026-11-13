@@ -14,6 +14,7 @@ function lineChart(el, series, opts) {
   const m = {l: 40, r: 14, t: 12, b: 26};
   let lo = opts.invert ? 1 : Math.min(0, ...vals), hi = Math.max(...vals);
   if (opts.invert) hi = Math.max(hi, 10);
+  if (opts.max) hi = opts.max;  // échelle fixe (ex. 100)
   if (hi === lo) hi = lo + 1;
   const idx = Object.fromEntries(dates.map((d, i) => [d, i]));
   const x = i => m.l + (dates.length === 1 ? (W - m.l - m.r) / 2 : i * (W - m.l - m.r) / (dates.length - 1));

@@ -30,6 +30,19 @@ def host_of(url):
     return h[4:] if h.startswith("www.") else h
 
 
+BASELINE_POSITION = 100
+
+
+def seed_baseline(keyword_id, today):
+    """Premier relevé d'un mot-clé : la veille est enregistrée à la position 100,
+    pour que l'évolution à 1 jour parte d'une valeur de référence."""
+    if db.one("SELECT 1 FROM ranks WHERE keyword_id=? LIMIT 1", (keyword_id,)):
+        return
+    veille = (dt.date.fromisoformat(today) - dt.timedelta(days=1)).isoformat()
+    db.x("INSERT OR IGNORE INTO ranks(keyword_id, date, position, url) VALUES(?,?,?,NULL)",
+         (keyword_id, veille, BASELINE_POSITION))
+
+
 def save_serp(keyword_id, date, urls):
     """Garde la page de résultats du jour (pour la vue concurrents)."""
     con = db.connect()
@@ -81,6 +94,7 @@ def run_checks(project_id=None, only_missing=False):
                 try:
                     urls = mod.search(k["keyword"], k["lang"], k["country"], MAX_RESULTS)
                     pos, url = find_position(urls, k["domain"])
+                    seed_baseline(k["id"], today)
                     db.x("INSERT OR REPLACE INTO ranks(keyword_id, date, position, url) "
                          "VALUES(?,?,?,?)", (k["id"], today, pos, url))
                     save_serp(k["id"], today, urls)

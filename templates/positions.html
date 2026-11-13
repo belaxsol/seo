@@ -22,7 +22,7 @@
 <div class="stats">
   <div><b>{{ kpi.n }}</b><span>mots-clés suivis</span></div>
   <div title="100 % = tous vos mots-clés en position 1. Estimation de la part de clics captée, sans volumes de recherche."><b>{{ (kpi.visibility ~ ' %') if kpi.visibility is not none else '–' }}</b><span>visibilité (plus c'est haut, mieux c'est)</span></div>
-  <div><b>{{ kpi.avg if kpi.avg is not none else '–' }}</b><span>position moyenne</span></div>
+  <div><b>{{ kpi.avg if kpi.avg is not none else '–' }}</b><span>position moyenne (mots classés)</span></div>
   <div><b>{{ kpi.top3 }}</b><span>dans le top 3</span></div>
   <div><b>{{ kpi.top10 }}</b><span>dans le top 10</span></div>
   <div><b>{{ kpi.out }}</b><span>hors top {{ top }}</span></div>
@@ -34,15 +34,36 @@
 <section class="card">
   <div class="bar">
     <h2>Évolution{% if sel_kw %} : {{ sel_kw.keyword }} ({{ sel_kw.engine }}){% endif %}</h2>
-    <span class="muted">
-      {% for d, l in [(30,'30 j'),(90,'90 j'),(365,'1 an')] %}
-      <a href="{{ url_for('positions', pid=project.id, days=d, kw=sel) }}" class="{{ 'on' if days == d else '' }}">{{ l }}</a>
+    {% if sel %}<a class="small-inline" href="{{ url_for('positions', pid=project.id, days=days) }}">← tous les mots-clés</a>{% endif %}
+    <div class="seg" role="group" aria-label="Période">
+      {% for d, l in [(7,'7 j'),(30,'30 j'),(90,'90 j'),(365,'1 an')] %}
+      <a href="{{ url_for('positions', pid=project.id, days=d, kw=sel) }}" class="{{ 'on' if days == d else '' }}"
+         {% if days == d %}aria-current="true"{% endif %}>{{ l }}</a>
       {% endfor %}
-      {% if sel %}· <a href="{{ url_for('positions', pid=project.id, days=days) }}">tous les mots-clés</a>{% endif %}
-    </span>
+    </div>
   </div>
   <div id="chart"></div>
   <script>lineChart(document.getElementById('chart'), {{ series|tojson }}, {invert: true});</script>
+</section>
+
+<section class="card">
+  <div class="bar">
+    <div class="grow">
+      <h2>Note moyenne sur 100</h2>
+      <p class="muted small-inline" style="margin:0">Moyenne de tous vos mots-clés : un mot non classé compte pour 100. Plus c'est bas, mieux c'est.</p>
+    </div>
+    {% if avg_now is not none %}
+    <div class="avg-now">
+      <b>{{ '%g' % avg_now }}</b><span>/ 100</span>
+      {% if avg_prev is not none and avg_prev != avg_now %}
+        {% set d = avg_prev - avg_now %}
+        <em class="{{ 'up' if d > 0 else 'down' }}">{{ '▲' if d > 0 else '▼' }} {{ '%g' % ((d|abs)|round(1)) }}</em>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+  <div id="chart-avg"></div>
+  <script>lineChart(document.getElementById('chart-avg'), {{ avg_series|tojson }}, {invert: true, max: 100, height: 220});</script>
 </section>
 
 {% if sel_kw and serp %}

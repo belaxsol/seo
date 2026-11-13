@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 from collections import defaultdict
+from urllib.parse import urlparse
 
 from flask import (Flask, Response, abort, flash, redirect, render_template, request,
                    url_for)
@@ -88,8 +89,8 @@ def _delta(ref, last):
     a, b = ref["position"], last["position"]
     if a is None and b is None:
         return None
-    if a is None:
-        return "in"
+    if a is None:  # pas classé avant : on compare à la position de départ (100)
+        return tracker.BASELINE_POSITION - b
     if b is None:
         return "out"
     return a - b
@@ -157,7 +158,20 @@ def positions(pid):
             sel_kw = k
         if found and (sel == k["id"] or (sel is None and len(series) < 8)):
             series.append({"name": f"{k['keyword']} ({k['engine']})",
-                           "points": [[r["date"], r["position"]] for r in h if r["date"] >= since]})
+                           "points": [[r["date"], r["position"] if r["position"] is not None
+                                       else tracker.BASELINE_POSITION]  # non trouvé = bas du graphique
+                                  for r in h if r["date"] >= since]})
+    # note moyenne par jour : tous les mots-clés, un mot non classé compte pour 100
+    by_day = defaultdict(list)
+    for h in hist.values():
+        for r in h:
+            if r["date"] >= since:
+                by_day[r["date"]].append(r["position"] if r["position"] is not None
+                                         else tracker.BASELINE_POSITION)
+    avg_points = [[d, round(sum(v) / len(v), 1)] for d, v in sorted(by_day.items())]
+    avg_series = [{"name": "Position moyenne (non classé = 100)", "points": avg_points}]
+    avg_now = avg_points[-1][1] if avg_points else None
+    avg_prev = avg_points[-2][1] if len(avg_points) > 1 else None
     pos = [r["last"]["position"] for r in rows if r["last"] and r["last"]["position"] is not None]
     moved = [r["d1"] for r in rows]
     checked = [r["last"]["position"] for r in rows if r["last"]]
@@ -171,7 +185,7 @@ def positions(pid):
         serp = db.q("SELECT * FROM serp WHERE keyword_id=? AND date=(SELECT MAX(date) FROM serp "
                     "WHERE keyword_id=?) ORDER BY position", (sel, sel))
     return render_template("positions.html", project=project, tab="positions", rows=rows,
-                           series=series, days=days, sel=sel, sel_kw=sel_kw, serp=serp, kpi=kpi,
+                           series=series, avg_series=avg_series, avg_now=avg_now, avg_prev=avg_prev, days=days, sel=sel, sel_kw=sel_kw, serp=serp, kpi=kpi,
                            engines=engines(), default_engine=default_engine(),
                            status=tracker.STATUS, top=tracker.MAX_RESULTS)
 
@@ -199,17 +213,98 @@ def competitors(pid):
                            rows=rows[:60], nkw=nkw, top=tracker.MAX_RESULTS)
 
 
+CANNIB_DAYS = 30        # fenêtre d'analyse
+CANNIB_SWITCHES = 2     # changements de page classée à partir desquels on parle d'alternance
+
+
+def norm_url(url):
+    """Identifie une page : sans schéma, www, paramètres, ancre ni slash final."""
+    p = urlparse(url)
+    host = p.netloc.lower().split(":")[0]
+    host = host[4:] if host.startswith("www.") else host
+    return host + (p.path.rstrip("/") or "/")
+
+
+def is_mine(domain, project):
+    return domain == project["domain"] or domain.endswith("." + project["domain"])
+
+
+@app.route("/p/<int:pid>/cannibalisation")
+def cannibalisation(pid):
+    """Mots-clés sur lesquels plusieurs pages du site se disputent la même place."""
+    project = get_project(pid)
+    since = (dt.date.today() - dt.timedelta(days=CANNIB_DAYS)).isoformat()
+    kws = db.q("SELECT id, keyword, engine FROM keywords WHERE project_id=? ORDER BY keyword", (pid,))
+    # (mot-clé, jour) -> [(position, page)] pour les pages du site uniquement
+    mine = defaultdict(lambda: defaultdict(list))
+    last_day = {}
+    for r in db.q("SELECT s.keyword_id, s.date, s.position, s.url, s.domain FROM serp s "
+                  "JOIN keywords k ON k.id = s.keyword_id WHERE k.project_id=? AND s.date>=? "
+                  "ORDER BY s.date, s.position", (pid, since)):
+        last_day[r["keyword_id"]] = r["date"]
+        if is_mine(r["domain"], project):
+            mine[r["keyword_id"]][r["date"]].append((r["position"], norm_url(r["url"]), r["url"]))
+    rows, tracked = [], 0
+    for k in kws:
+        if k["id"] not in last_day:
+            continue
+        tracked += 1
+        days = mine[k["id"]]
+        if not days:
+            continue
+        today = days.get(last_day[k["id"]], [])
+        simultaneous = len({n for _, n, _ in today}) >= 2
+        # page la mieux classée chaque jour, puis nombre de changements d'un jour à l'autre
+        leaders = [min(days[d])[1] for d in sorted(days)]
+        switches = sum(1 for a, b in zip(leaders, leaders[1:]) if a != b)
+        alternating = switches >= CANNIB_SWITCHES
+        if not (simultaneous or alternating):
+            continue
+        pages = {}
+        for d in sorted(days):
+            best_of_day = {}  # une page = une ligne par jour, à sa meilleure position
+            for pos, n, raw in days[d]:
+                if n not in best_of_day or pos < best_of_day[n][0]:
+                    best_of_day[n] = (pos, raw)
+            for n, (pos, raw) in best_of_day.items():
+                p = pages.setdefault(n, {"url": raw, "best": pos, "last": None, "days": 0})
+                p["best"] = min(p["best"], pos)
+                p["days"] += 1
+                p["url"] = raw
+                if d == last_day[k["id"]]:
+                    p["last"] = pos
+        rows.append({"k": k, "simultaneous": simultaneous, "alternating": alternating,
+                     "switches": switches, "ndays": len(days),
+                     "pages": sorted(pages.values(), key=lambda p: (p["last"] is None, p["best"]))})
+    rows.sort(key=lambda r: (not r["simultaneous"], -r["switches"], r["k"]["keyword"]))
+    stats = {"tracked": tracked, "conflicts": len(rows),
+             "simultaneous": sum(1 for r in rows if r["simultaneous"]),
+             "alternating": sum(1 for r in rows if r["alternating"])}
+    return render_template("cannibalisation.html", project=project, tab="cannibalisation",
+                           rows=rows, stats=stats, days=CANNIB_DAYS, switches=CANNIB_SWITCHES,
+                           top=tracker.MAX_RESULTS)
+
+
 @app.post("/p/<int:pid>/keywords/add")
 def keywords_add(pid):
     get_project(pid)
     engine = request.form.get("engine") or default_engine()
     words = request.form.getlist("kw") or request.form.get("keywords", "").splitlines()
     words = {w.strip().lower() for w in words if w.strip()}
+    known = {r["keyword"] for r in db.q("SELECT keyword FROM keywords WHERE project_id=? AND engine=?",
+                                        (pid, engine))}
+    fresh, dupes = sorted(words - known), sorted(words & known)
     db.xmany("INSERT OR IGNORE INTO keywords(project_id, keyword, engine) VALUES(?,?,?)",
-             [(pid, w, engine) for w in words])
-    started = start_checks(pid, only_missing=True)
-    flash(f"{len(words)} mot(s)-clé(s) ajouté(s) au suivi ({engine})."
-          + (" Premier relevé lancé." if started else " Ils seront relevés après le passage en cours."))
+             [(pid, w, engine) for w in fresh])
+    if fresh:
+        started = start_checks(pid, only_missing=True)
+        flash(f"{len(fresh)} mot(s)-clé(s) ajouté(s) au suivi ({engine})."
+              + (" Premier relevé lancé." if started else " Ils seront relevés après le passage en cours."))
+    else:
+        flash("Aucun mot-clé ajouté.")
+    if dupes:
+        flash(f"Déjà suivi{'s' if len(dupes) > 1 else ''} ({engine}) : " + ", ".join(dupes[:8])
+              + ("…" if len(dupes) > 8 else ""))
     return redirect(url_for("positions", pid=pid))
 
 

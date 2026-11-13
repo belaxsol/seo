@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="bar">
+  <div class="grow">
+    <h1>Cannibalisation</h1>
+    <p class="muted lead">Mots-clés sur lesquels plusieurs pages de <b>{{ project.domain }}</b> se disputent
+      la même place dans Google : aucune ne monte comme elle le devrait.</p>
+  </div>
+</div>
+
+<div class="kpis">
+  <div class="kpi"><span>Mots-clés analysés</span><b>{{ stats.tracked }}</b></div>
+  <div class="kpi {{ 'bad' if stats.conflicts }}"><span>En conflit</span><b>{{ stats.conflicts }}</b></div>
+  <div class="kpi"><span>Pages simultanées</span><b>{{ stats.simultaneous }}</b></div>
+  <div class="kpi"><span>Page qui alterne</span><b>{{ stats.alternating }}</b></div>
+</div>
+
+{% if not stats.tracked %}
+<div class="empty">
+  <b>Pas encore de données.</b>
+  <p>La détection s'appuie sur la page de résultats relevée chaque jour : lancez un relevé depuis l'onglet Positions.</p>
+</div>
+{% elif not rows %}
+<div class="empty ok">
+  <b>Aucune cannibalisation détectée.</b>
+  <p>Sur {{ days }} jours, aucun de vos {{ stats.tracked }} mots-clés ne voit plusieurs de vos pages en concurrence.</p>
+</div>
+{% else %}
+<div class="legend">
+  <span><em class="tag now">Simultanée</em> au moins 2 de vos pages dans le top {{ top }} au dernier relevé</span>
+  <span><em class="tag alt">Alternante</em> la page la mieux classée a changé {{ switches }} fois ou plus en {{ days }} jours</span>
+</div>
+
+{% for r in rows %}
+<section class="card conflict">
+  <div class="conflict-head">
+    <div class="grow">
+      <a class="kw" href="{{ url_for('positions', pid=project.id, kw=r.k.id) }}">{{ r.k.keyword }}</a>
+      <span class="muted small-inline">{{ r.k.engine }} · {{ r.ndays }} jour{{ 's' if r.ndays > 1 }} de présence</span>
+    </div>
+    {% if r.simultaneous %}<em class="tag now">Simultanée</em>{% endif %}
+    {% if r.alternating %}<em class="tag alt">Alternante · {{ r.switches }} changements</em>{% endif %}
+  </div>
+  <table class="flat">
+    <tr><th>Page</th><th class="num">Position actuelle</th><th class="num">Meilleure</th><th class="num">Jours classée</th></tr>
+    {% for p in r.pages %}
+    <tr>
+      <td class="url"><a href="{{ p.url }}" target="_blank" rel="noopener">{{ p.url }}</a></td>
+      <td class="num">{% if p.last %}<span class="pos">{{ p.last }}</span>{% else %}<span class="muted">hors top {{ top }}</span>{% endif %}</td>
+      <td class="num">{{ p.best }}</td>
+      <td class="num">{{ p.days }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+{% endfor %}
+
+<div class="card howto">
+  <h2>Que faire ?</h2>
+  <ul>
+    <li><b>Fusionner</b> les pages en une seule plus complète, avec une redirection 301 de l'ancienne vers la nouvelle.</li>
+    <li><b>Différencier</b> : donner à chaque page une intention distincte (informative d'un côté, commerciale de l'autre).</li>
+    <li><b>Désigner une page principale</b> : renforcer le maillage interne vers elle, canonical ou noindex sur l'autre.</li>
+    <li><b>Ne rien faire</b> si c'est légitime, par exemple une catégorie et une fiche produit.</li>
+  </ul>
+</div>
+{% endif %}
+{% endblock %}

@@ -21,6 +21,7 @@ Tout est automatique. Le seul import possible est un crawl Screaming Frog.
 |---|---|
 | **Positions** | Vous listez vos mots-clés, l'outil relève leur position chaque jour sur Google (ou Bing, DuckDuckGo) : évolution à 1, 7 et 30 jours, meilleure position, page classée, courbe et page de résultats complète par mot-clé |
 | **Concurrents** | Domaines les plus présents sur vos mots-clés, avec leur position moyenne |
+| **Cannibalisation** | Repère les mots-clés où plusieurs de vos pages se disputent la même place : *simultanée* (2 pages ou plus dans le top au dernier relevé) ou *alternante* (la page la mieux classée change 2 fois ou plus en 30 jours). Les variantes d'URL (`www`, paramètres, `#ancre`, slash final) sont regroupées. Utilise les pages de résultats déjà relevées : aucune requête en plus |
 | **Mots-clés** | Suggestions Google et Bing (mode approfondi : a → z + questions) ; un clic pour les ajouter au suivi |
 | **Tendances** | Courbes Google Trends, rafraîchies chaque semaine |
 | **Audit** | Nombre d'URL, de 301, 302 et 404, avec leurs liens entrants et les pages qui font le lien ; règles SEO (titles, H1, contenu mince…). Crawler intégré (HTML brut, respecte robots.txt), ou import de l'export « Internal » de Screaming Frog (`internal_all.csv`) |
