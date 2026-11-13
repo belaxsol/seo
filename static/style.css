@@ -148,3 +148,5 @@ tr.me td { background: var(--accent-soft) !important; font-weight: 600; }
   main { padding: 18px 16px 48px; }
   nav { margin-left: 0; }
 }
+
+a.warn { color: var(--warn); font-weight: 600; }

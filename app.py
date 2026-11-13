@@ -145,12 +145,23 @@ def positions(pid):
     for r in db.q("SELECT r.* FROM ranks r JOIN keywords k ON k.id=r.keyword_id "
                   "WHERE k.project_id=? ORDER BY r.date", (pid,)):
         hist[r["keyword_id"]].append(r)
+    # pages du site dans le dernier relevé de chaque mot-clé (une ligne par page distincte)
+    own = defaultdict(dict)
+    for r in db.q("SELECT s.keyword_id, s.position, s.url, s.domain FROM serp s "
+                  "JOIN keywords k ON k.id = s.keyword_id WHERE k.project_id=? AND s.date=("
+                  "SELECT MAX(date) FROM serp WHERE keyword_id=s.keyword_id) ORDER BY s.position",
+                  (pid,)):
+        if is_mine(r["domain"], project):
+            own[r["keyword_id"]].setdefault(norm_url(r["url"]), (r["position"], r["url"]))
+    alternating = alternating_keywords(project)
     rows, series, sel_kw = [], [], None
     for k in kws:
         h = hist[k["id"]]
         last = h[-1] if h else None
         found = [r["position"] for r in h if r["position"] is not None]
         rows.append({"k": k, "last": last, "best": min(found) if found else None,
+                     "pages": sorted(own[k["id"]].values()),
+                     "conflict": k["id"] in alternating,
                      "d1": _delta(h[-2], last) if len(h) > 1 else None,
                      "d7": _delta(_ref(h, 7), last) if h else None,
                      "d30": _delta(_ref(h, 30), last) if h else None})
@@ -229,21 +240,37 @@ def is_mine(domain, project):
     return domain == project["domain"] or domain.endswith("." + project["domain"])
 
 
-@app.route("/p/<int:pid>/cannibalisation")
-def cannibalisation(pid):
-    """Mots-clés sur lesquels plusieurs pages du site se disputent la même place."""
-    project = get_project(pid)
+def _cannib_data(project):
+    """Pages du site par mot-clé et par jour : ({kid: {date: [(pos, page, url)]}}, {kid: dernier jour})."""
     since = (dt.date.today() - dt.timedelta(days=CANNIB_DAYS)).isoformat()
-    kws = db.q("SELECT id, keyword, engine FROM keywords WHERE project_id=? ORDER BY keyword", (pid,))
-    # (mot-clé, jour) -> [(position, page)] pour les pages du site uniquement
     mine = defaultdict(lambda: defaultdict(list))
     last_day = {}
     for r in db.q("SELECT s.keyword_id, s.date, s.position, s.url, s.domain FROM serp s "
                   "JOIN keywords k ON k.id = s.keyword_id WHERE k.project_id=? AND s.date>=? "
-                  "ORDER BY s.date, s.position", (pid, since)):
+                  "ORDER BY s.date, s.position", (project["id"], since)):
         last_day[r["keyword_id"]] = r["date"]
         if is_mine(r["domain"], project):
             mine[r["keyword_id"]][r["date"]].append((r["position"], norm_url(r["url"]), r["url"]))
+    return mine, last_day
+
+
+def _switches(days):
+    """Changements de page la mieux classée d'un jour à l'autre."""
+    leaders = [min(days[d])[1] for d in sorted(days)]
+    return sum(1 for a, b in zip(leaders, leaders[1:]) if a != b)
+
+
+def alternating_keywords(project):
+    mine, _ = _cannib_data(project)
+    return {kid for kid, days in mine.items() if _switches(days) >= CANNIB_SWITCHES}
+
+
+@app.route("/p/<int:pid>/cannibalisation")
+def cannibalisation(pid):
+    """Mots-clés dont la page classée change d'un relevé à l'autre (Google hésite entre plusieurs pages)."""
+    project = get_project(pid)
+    kws = db.q("SELECT id, keyword, engine FROM keywords WHERE project_id=? ORDER BY keyword", (pid,))
+    mine, last_day = _cannib_data(project)
     rows, tracked = [], 0
     for k in kws:
         if k["id"] not in last_day:
@@ -252,13 +279,9 @@ def cannibalisation(pid):
         days = mine[k["id"]]
         if not days:
             continue
-        today = days.get(last_day[k["id"]], [])
-        simultaneous = len({n for _, n, _ in today}) >= 2
-        # page la mieux classée chaque jour, puis nombre de changements d'un jour à l'autre
-        leaders = [min(days[d])[1] for d in sorted(days)]
-        switches = sum(1 for a, b in zip(leaders, leaders[1:]) if a != b)
+        switches = _switches(days)
         alternating = switches >= CANNIB_SWITCHES
-        if not (simultaneous or alternating):
+        if not alternating:
             continue
         pages = {}
         for d in sorted(days):
@@ -273,13 +296,13 @@ def cannibalisation(pid):
                 p["url"] = raw
                 if d == last_day[k["id"]]:
                     p["last"] = pos
-        rows.append({"k": k, "simultaneous": simultaneous, "alternating": alternating,
-                     "switches": switches, "ndays": len(days),
+        rows.append({"k": k, "switches": switches, "ndays": len(days),
                      "pages": sorted(pages.values(), key=lambda p: (p["last"] is None, p["best"]))})
-    rows.sort(key=lambda r: (not r["simultaneous"], -r["switches"], r["k"]["keyword"]))
+    multi = sum(1 for k in kws if k["id"] in last_day and
+                len({n for _, n, _ in mine[k["id"]].get(last_day[k["id"]], [])}) >= 2)
+    rows.sort(key=lambda r: (-r["switches"], r["k"]["keyword"]))
     stats = {"tracked": tracked, "conflicts": len(rows),
-             "simultaneous": sum(1 for r in rows if r["simultaneous"]),
-             "alternating": sum(1 for r in rows if r["alternating"])}
+             "multi": multi}
     return render_template("cannibalisation.html", project=project, tab="cannibalisation",
                            rows=rows, stats=stats, days=CANNIB_DAYS, switches=CANNIB_SWITCHES,
                            top=tracker.MAX_RESULTS)

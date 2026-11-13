@@ -98,7 +98,12 @@
     <td class="num">{{ delta(r.d7) }}</td>
     <td class="num">{{ delta(r.d30) }}</td>
     <td class="num">{{ '%g' % r.best if r.best is not none else '–' }}</td>
-    <td class="url">{{ r.last.url if r.last and r.last.url else '' }}</td>
+    <td class="url">
+      {% if r.pages|length > 1 %}
+      {% if r.conflict %}<a class="warn" href="{{ url_for('cannibalisation', pid=project.id) }}" title="La page classée change d'un relevé à l'autre">⚠ {{ r.pages|length }} pages</a>
+      {% else %}<span class="muted">{{ r.pages|length }} pages</span>{% endif %}
+      {% for p, u in r.pages %}<div>{{ '%g' % p }} · {{ u }}</div>{% endfor %}
+      {% else %}{{ r.last.url if r.last and r.last.url else '' }}{% endif %}</td>
     <td>{% if r.k.last_error %}<span class="down" title="{{ r.k.last_error }}">échec ⓘ</span>
         {% else %}{{ r.last.date if r.last else 'en attente' }}{% endif %}</td>
     <td class="num"><form method="post" action="{{ url_for('keyword_delete', pid=project.id, kid=r.k.id) }}"><button class="link danger" title="Retirer du suivi">✕</button></form></td>
