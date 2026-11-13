@@ -149,10 +149,15 @@ def audit(pages):
         return p["status"] == 200 and "html" in (p["content_type"] or "html")
 
     html = [p for p in pages if is_html(p)]
-    add("haute", "Pages en erreur (4xx / 5xx / injoignables)",
-        [p["url"] for p in pages if p["status"] == 0 or p["status"] >= 400])
-    add("moyenne", "Redirections (3xx) dans les liens internes",
-        [p["url"] for p in pages if 300 <= (p["status"] or 0) < 400])
+    def by_status(pred):
+        return [p["url"] for p in pages if pred(p["status"] or 0)]
+    add("haute", "Pages introuvables (404)", by_status(lambda s: s == 404))
+    add("haute", "Accès refusé (403)", by_status(lambda s: s == 403))
+    add("haute", "Autres erreurs client (4xx)", by_status(lambda s: 400 <= s < 500 and s not in (403, 404)))
+    add("haute", "Erreurs serveur (5xx)", by_status(lambda s: s >= 500))
+    add("haute", "Pages injoignables (délai dépassé, DNS...)", by_status(lambda s: s == 0))
+    add("moyenne", "Redirections permanentes (301 / 308)", by_status(lambda s: s in (301, 308)))
+    add("moyenne", "Redirections temporaires (302 / 303 / 307)", by_status(lambda s: s in (302, 303, 307)))
     add("haute", "Balise title absente", [p["url"] for p in html if not p["title"]])
     add("basse", "Title trop long (plus de 60 caractères)",
         [p["url"] for p in html if p["title"] and len(p["title"]) > 60])
@@ -179,3 +184,46 @@ def audit(pages):
         [p["url"] for p in html if p["inlinks"] == 1 and (p["depth"] or 0) > 1])
     order = {"haute": 0, "moyenne": 1, "basse": 2}
     return sorted(issues, key=lambda i: (order[i[0]], -len(i[2])))
+
+
+# Libellés d'incidents qui concernent un LIEN : on corrige dans les pages qui pointent vers l'URL.
+LINK_ISSUES = {
+    "Pages introuvables (404)", "Accès refusé (403)", "Autres erreurs client (4xx)",
+    "Erreurs serveur (5xx)", "Pages injoignables (délai dépassé, DNS...)",
+    "Redirections permanentes (301 / 308)", "Redirections temporaires (302 / 303 / 307)",
+}
+
+# Que faire, par type de problème.
+FIX = {
+    "Pages introuvables (404)": "La page n'existe pas (ou plus). Deux choix : recréer la page, ou, si elle a été "
+        "supprimée, corriger le lien dans chaque page listée à droite pour pointer vers la bonne URL. "
+        "Si l'ancienne URL avait des visiteurs ou des liens externes, ajoutez aussi une redirection 301.",
+    "Accès refusé (403)": "Le serveur refuse l'accès au robot : protection anti-bot ou pare-feu, page réservée "
+        "aux connectés, ou règle d'accès mal configurée. Testez l'URL dans un navigateur ; si elle s'ouvre, "
+        "autorisez le crawler (ou vérifiez les règles du pare-feu / CDN), sinon corrigez les liens qui y mènent.",
+    "Autres erreurs client (4xx)": "Le serveur rejette la requête (401 identification requise, 410 page supprimée "
+        "volontairement, 429 trop de requêtes…). Corrigez les liens qui y mènent ou retirez la page.",
+    "Erreurs serveur (5xx)": "Le serveur plante sur cette URL : consultez les journaux d'erreurs (PHP, Drupal "
+        "watchdog…) pour trouver la cause. À corriger côté site, pas dans les liens.",
+    "Pages injoignables (délai dépassé, DNS...)": "Le robot n'a pas obtenu de réponse : serveur trop lent, "
+        "domaine mal orthographié ou lien externe mort. Vérifiez l'adresse dans les pages listées.",
+    "Redirections permanentes (301 / 308)": "La page a changé d'adresse. Ça fonctionne, mais chaque redirection "
+        "coûte du temps et dilue un peu les liens : modifiez le lien dans les pages listées pour pointer "
+        "directement vers la destination finale.",
+    "Redirections temporaires (302 / 303 / 307)": "Redirection « provisoire ». Si le changement est définitif, "
+        "passez-la en 301 ; sinon, corrigez les liens pour viser directement la destination.",
+    "Balise title absente": "Ajoutez un title unique de 30 à 60 caractères avec le mot-clé principal de la page.",
+    "Title trop long (plus de 60 caractères)": "Google coupe les titles longs : raccourcissez en gardant le mot-clé au début.",
+    "Title trop court (moins de 30 caractères)": "Développez le title avec le mot-clé principal et un bénéfice ou un lieu.",
+    "Title dupliqué": "Chaque page doit avoir son propre title : différenciez-les selon le sujet de chaque page.",
+    "Meta description dupliquée": "Rédigez une description propre à chaque page.",
+    "Meta description absente": "Ajoutez une description de 120 à 160 caractères : elle s'affiche sous le titre dans Google.",
+    "Meta description trop longue (plus de 160 caractères)": "Raccourcissez-la : Google la coupe au-delà de 160 caractères.",
+    "H1 absent": "Ajoutez un titre principal (H1) qui décrit le sujet de la page.",
+    "Plusieurs H1": "Gardez un seul H1 par page ; passez les autres en H2.",
+    "Contenu mince (moins de 200 mots)": "Étoffez la page (cas concrets, questions fréquentes, détails) ou fusionnez-la avec une page proche.",
+    "Pages non indexables (noindex ou canonical vers une autre URL)": "Vérifiez que c'est voulu : si la page doit apparaître dans Google, retirez le noindex ou corrigez le canonical.",
+    "Pages profondes (plus de 3 clics depuis l'accueil)": "Rapprochez-les de l'accueil : lien depuis le menu, le pied de page ou une page très visitée.",
+    "Pages lentes (plus d'une seconde)": "Optimisez : images, cache, hébergement. Un serveur lent freine aussi le crawl de Google.",
+    "Pages avec un seul lien interne entrant": "Ajoutez des liens depuis d'autres pages pour qu'elles soient mieux explorées et poussées.",
+}

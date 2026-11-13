@@ -14,7 +14,7 @@
   {% if project %}
   <span class="proj">{{ project.name }} · {{ project.domain }} · {{ project.lang }}-{{ project.country }}</span>
   <nav>
-    {% for key, label in [('positions','Positions'),('competitors','Concurrents'),('gap','Écarts'),('cannibalisation','Cannibalisation'),('ideas','Mots-clés'),('trends','Tendances'),('audit','Audit du site')] %}
+    {% for key, label in [('dashboard','Tableau de bord'),('positions','Positions'),('competitors','Concurrents'),('gap','Écarts'),('market','Mots-clés concurrents'),('cannibalisation','Cannibalisation'),('ideas','Mots-clés'),('trends','Tendances'),('audit','Audit du site')] %}
     <a href="{{ url_for(key, pid=project.id) }}" class="{{ 'on' if tab == key else '' }}">{{ label }}</a>
     {% endfor %}
   </nav>

@@ -6,7 +6,7 @@
   <tr><th>Nom</th><th>Domaine</th><th>Langue / pays</th><th class="num">Mots-clés suivis</th><th></th></tr>
   {% for p in projects %}
   <tr>
-    <td><a href="{{ url_for('positions', pid=p.id) }}"><b>{{ p.name }}</b></a></td>
+    <td><a href="{{ url_for('dashboard', pid=p.id) }}"><b>{{ p.name }}</b></a></td>
     <td>{{ p.domain }}</td><td>{{ p.lang }}-{{ p.country }}</td><td class="num">{{ p.nkw }}</td>
     <td class="num"><form method="post" action="{{ url_for('project_delete', pid=p.id) }}"
         onsubmit="return confirm('Supprimer ce site et toutes ses données ?')"><button class="link danger">Supprimer</button></form></td>

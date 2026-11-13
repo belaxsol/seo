@@ -54,3 +54,15 @@ function lineChart(el, series, opts) {
     `<span><i style="background:${COLORS[n % COLORS.length]}"></i>${esc(s.name)}</span>`).join('');
   el.innerHTML = svg + `<div class="legend">${legend}</div>`;
 }
+
+// Mini courbe pour les cartes d'indicateurs : sparkline(el, [valeurs]).
+function sparkline(el, values) {
+  if (!values || values.length < 2) { el.innerHTML = ''; return; }
+  const W = 120, H = 34, lo = Math.min(...values), hi = Math.max(...values), span = (hi - lo) || 1;
+  const pts = values.map((v, i) => [(i * W / (values.length - 1)).toFixed(1),
+                                    (H - 3 - (v - lo) / span * (H - 6)).toFixed(1)]);
+  const line = pts.map(p => p.join(',')).join(' ');
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" aria-hidden="true">` +
+    `<polygon points="0,${H} ${line} ${W},${H}" fill="currentColor" opacity=".12"/>` +
+    `<polyline points="${line}" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>`;
+}

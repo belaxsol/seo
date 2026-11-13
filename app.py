@@ -135,6 +135,133 @@ def project_delete(pid):
 
 # ---------------- Suivi de positions ----------------
 
+def _day_stats(plist):
+    """Indicateurs d'un jour à partir des positions de tous les mots-clés (None ou 100 = non classé)."""
+    ranked = [p for p in plist if p is not None and p < tracker.BASELINE_POSITION]
+    return {"vis": visibility([p if p in ranked else None for p in plist]) or 0.0,
+            "avg": round(sum(p if p is not None else tracker.BASELINE_POSITION for p in plist)
+                         / len(plist), 1),
+            "top3": sum(1 for p in ranked if p <= 3), "top10": sum(1 for p in ranked if p <= 10),
+            "out": len(plist) - len(ranked)}
+
+
+@app.route("/p/<int:pid>/dashboard")
+def dashboard(pid):
+    """Vue d'ensemble : visibilité, répartition, mouvements, concurrents, écarts, cannibalisation."""
+    project = get_project(pid)
+    days = request.args.get("days", 30, type=int)
+    since = (dt.date.today() - dt.timedelta(days=days)).isoformat()
+    kws = {k["id"]: k for k in db.q("SELECT * FROM keywords WHERE project_id=?", (pid,))}
+    hist = defaultdict(list)
+    for r in db.q("SELECT r.* FROM ranks r JOIN keywords k ON k.id=r.keyword_id "
+                  "WHERE k.project_id=? ORDER BY r.date", (pid,)):
+        hist[r["keyword_id"]].append(r)
+    by_day = defaultdict(list)
+    for h in hist.values():
+        for r in h:
+            if r["position"] != tracker.BASELINE_POSITION:  # relevé de référence, pas une vraie mesure
+                by_day[r["date"]].append(r["position"])
+    dates = sorted(by_day)
+    # courbe de position moyenne : on garde le relevé de référence (tout à 100 au départ)
+    avg_day = defaultdict(list)
+    for h in hist.values():
+        for r in h:
+            avg_day[r["date"]].append(r["position"] if r["position"] is not None
+                                      else tracker.BASELINE_POSITION)
+    avg_points = [[d, round(sum(v) / len(v), 1)] for d, v in sorted(avg_day.items()) if d >= since]
+    series = {d: _day_stats(by_day[d]) for d in dates}
+    shown = [d for d in dates if d >= since] or dates[-1:]
+    now = series[dates[-1]] if dates else None
+    ref = None
+    if len(dates) > 1:
+        limit = (dt.date.fromisoformat(dates[-1]) - dt.timedelta(days=7)).isoformat()
+        ref = series[([d for d in dates[:-1] if d <= limit] or dates[:1])[-1]]
+
+    def kpi(key, label, unit="", lower_better=False, hint=""):
+        if not now:
+            return None
+        diff = round(now[key] - ref[key], 1) if ref else None
+        good = None if not diff else (diff < 0) == lower_better
+        return {"label": label, "value": now[key], "unit": unit, "diff": diff, "good": good,
+                "spark": [(-series[d][key] if lower_better else series[d][key]) for d in shown],
+                "hint": hint}
+    kpis = [k for k in (
+        kpi("vis", "Visibilité", " %", hint="100 % = tous vos mots-clés en position 1"),
+        kpi("avg", "Note moyenne", " /100", True, "Moyenne des positions, non classé = 100 : plus bas = mieux"),
+        kpi("top3", "Top 3"), kpi("top10", "Top 10"),
+        kpi("out", "Hors top %d" % tracker.MAX_RESULTS, "", True)) if k]
+
+    # état courant par mot-clé
+    latest = {}
+    for kid, h in hist.items():
+        last = h[-1]
+        base = (_ref(h, 7) or h[-2]) if len(h) > 1 else None
+        if base and base["position"] == tracker.BASELINE_POSITION:
+            base = None  # nouveau mot-clé : l'écart à la position de départ n'est pas un mouvement
+        latest[kid] = {"k": kws[kid], "pos": last["position"], "url": last["url"],
+                       "d": _delta(base, last)}
+    pos_of = {kid: v["pos"] for kid, v in latest.items()}
+    buckets = [("Top 3", lambda p: p is not None and p <= 3, "b1"),
+               ("4 à 10", lambda p: p is not None and 3 < p <= 10, "b2"),
+               ("11 à 20", lambda p: p is not None and 10 < p <= 20, "b3"),
+               ("21 à %d" % tracker.MAX_RESULTS, lambda p: p is not None and p > 20, "b4"),
+               ("Hors top %d" % tracker.MAX_RESULTS, lambda p: p is None, "b5")]
+    dist = [{"label": lb, "n": sum(1 for p in pos_of.values() if f(p)), "cls": c} for lb, f, c in buckets]
+    movers = [v for v in latest.values() if isinstance(v["d"], (int, float)) and v["d"] != 0]
+    winners = sorted((v for v in movers if v["d"] > 0), key=lambda v: -v["d"])[:5]
+    losers = sorted((v for v in movers if v["d"] < 0), key=lambda v: v["d"])[:5]
+    near = sorted((v for v in latest.values() if v["pos"] is not None and 10 < v["pos"] <= 20),
+                  key=lambda v: v["pos"])[:6]
+
+    # concurrents et opportunités à partir du dernier relevé de chaque mot-clé
+    serp = defaultdict(dict)
+    for r in db.q("SELECT s.keyword_id, s.domain, s.position, s.url FROM serp s "
+                  "JOIN keywords k ON k.id = s.keyword_id WHERE k.project_id=? AND s.date = "
+                  "(SELECT MAX(date) FROM serp WHERE keyword_id = s.keyword_id) ORDER BY s.position",
+                  (pid,)):
+        serp[r["keyword_id"]].setdefault(r["domain"], (r["position"], r["url"]))
+    count, best = defaultdict(int), defaultdict(list)
+    for kid, doms in serp.items():
+        for d, (p, _) in doms.items():
+            if not is_mine(d, project):
+                count[d] += 1
+                best[d].append(p)
+    nkw = len(serp)
+    rivals = [{"domain": d, "n": n, "share": round(100 * n / nkw), "avg": round(sum(best[d]) / n, 1)}
+              for d, n in sorted(count.items(), key=lambda x: (-x[1], x[0]))[:6]]
+    opps = []
+    for kid, doms in serp.items():
+        mine = [p for d, (p, _) in doms.items() if is_mine(d, project)]
+        me = min(mine) if mine else None
+        if me is not None and me <= 10:
+            continue
+        rival = next(((d, p) for d, (p, _) in doms.items() if not is_mine(d, project) and p <= 5), None)
+        if rival:
+            opps.append({"k": kws[kid], "me": me, "rival": rival[0], "rpos": rival[1]})
+    opps.sort(key=lambda o: (o["me"] is not None, o["rpos"], o["k"]["keyword"]))
+    mine_d, last_day = _cannib_data(project)
+    alternating = [kws[k] for k, d in mine_d.items() if k in kws and _switches(d) >= CANNIB_SWITCHES]
+    multi = sum(1 for kid in serp if len({n for _, n, _ in mine_d.get(kid, {}).get(last_day.get(kid), [])}) >= 2)
+    crawl = next((c for c in db.q("SELECT * FROM crawls WHERE project_id=? ORDER BY id DESC", (pid,))
+                  if c["pages"]), None)
+    site = None
+    if crawl:
+        n = defaultdict(int)
+        for r in db.q("SELECT status, COUNT(*) c FROM pages WHERE crawl_id=? GROUP BY status", (crawl["id"],)):
+            n[r["status"] or 0] += r["c"]
+        site = {"crawl": crawl, "pages": crawl["pages"], "c404": n[404], "c403": n[403],
+                "c301": n[301] + n[308], "c302": n[302] + n[303] + n[307],
+                "other": sum(v for s, v in n.items() if s >= 500 or s == 0 or (400 <= s < 500 and s not in (403, 404))),
+                "broken": db.q("SELECT url, inlinks FROM pages WHERE crawl_id=? AND status=404 "
+                               "ORDER BY inlinks DESC, url LIMIT 4", (crawl["id"],))}
+    return render_template("dashboard.html", project=project, tab="dashboard", days=days, kpis=kpis, site=site,
+                           trend=[{"name": "Position moyenne (non classé = 100)", "points": avg_points}],
+                           ndates=len(dates), dist=dist, ntotal=len(latest), winners=winners,
+                           losers=losers, near=near, rivals=rivals, nkw=nkw, opps=opps[:6],
+                           nopps=len(opps), alternating=alternating, multi=multi,
+                           status=tracker.STATUS, top=tracker.MAX_RESULTS)
+
+
 @app.route("/p/<int:pid>/positions")
 def positions(pid):
     project = get_project(pid)
@@ -277,15 +404,70 @@ def gap(pid):
 @app.post("/p/<int:pid>/gap/explore")
 def gap_explore(pid):
     project = get_project(pid)
-    comp = request.form.get("c", "").strip()
-    if not comp:
-        abort(400)
-    if explore.STATUS.get(pid, {}).get("running") or tracker.STATUS["running"]:
+    comps = [tracker.clean_domain(c) for c in request.form.getlist("c") if c.strip()]
+    if not comps:
+        flash("Choisissez au moins un concurrent à explorer.")
+    elif explore.STATUS.get(pid, {}).get("running") or tracker.STATUS["running"]:
         flash("Un relevé est déjà en cours : attendez la fin avant d'explorer un concurrent.")
     else:
-        threading.Thread(target=explore.run, args=(project, comp, default_engine()), daemon=True).start()
+        threading.Thread(target=explore.run_many, args=(project, comps, default_engine()),
+                         daemon=True).start()
         time.sleep(0.3)
-    return redirect(url_for("gap", pid=pid, c=comp))
+    if request.form.get("back") == "market" or len(comps) != 1:
+        return redirect(url_for("market", pid=pid))
+    return redirect(url_for("gap", pid=pid, c=comps[0]))
+
+
+@app.route("/p/<int:pid>/market")
+def market(pid):
+    """Mots-clés repérés chez les concurrents explorés : par mot-clé (avec la liste des concurrents
+    classés dessus) ou par concurrent (avec la liste de ses mots-clés)."""
+    project = get_project(pid)
+    by = request.args.get("by", "kw")
+    show_all = request.args.get("all") == "1"
+    data = {}  # mot-clé -> {"me": position, "rivals": {domaine: (position, url)}}
+    explored = {r["competitor"] for r in db.q(
+        "SELECT DISTINCT competitor FROM gap_probe WHERE project_id=?", (pid,))}
+    for r in db.q("SELECT keyword, my_pos, competitor, comp_pos, comp_url FROM gap_probe "
+                  "WHERE project_id=?", (pid,)):
+        e = data.setdefault(r["keyword"], {"me": r["my_pos"], "rivals": {}})
+        if r["comp_pos"] is not None:
+            e["rivals"][r["competitor"]] = (r["comp_pos"], r["comp_url"])
+    for r in db.q("SELECT keyword, position, url, domain FROM probe_serp WHERE project_id=? "
+                  "ORDER BY position", (pid,)):
+        e = data.setdefault(r["keyword"], {"me": None, "rivals": {}})
+        if is_mine(r["domain"], project):
+            e["me"] = r["position"] if e["me"] is None else min(e["me"], r["position"])
+        else:
+            e["rivals"].setdefault(r["domain"], (r["position"], r["url"]))
+    tracked = {k["keyword"] for k in db.q("SELECT keyword FROM keywords WHERE project_id=?", (pid,))}
+    rows = []
+    for kw, e in data.items():
+        if not e["rivals"] or (not show_all and e["me"] is not None and e["me"] <= 10):
+            continue
+        rivals = sorted(e["rivals"].items(), key=lambda x: x[1][0])
+        rows.append({"keyword": kw, "me": e["me"], "rivals": rivals, "tracked": kw in tracked,
+                     "top10": sum(1 for _, (p, _) in rivals if p <= 10)})
+    rows.sort(key=lambda r: (r["me"] is not None, -r["top10"], r["keyword"]))
+    groups = defaultdict(list)  # concurrent -> [(mot-clé, position, ma position)]
+    for r in rows:
+        for dom, (p, url) in r["rivals"]:
+            groups[dom].append({"keyword": r["keyword"], "pos": p, "url": url, "me": r["me"]})
+    comps = sorted(groups.items(), key=lambda x: (x[0] not in explored, -len(x[1]), x[0]))[:15]
+    for _, lst in comps:
+        lst.sort(key=lambda x: (x["pos"], x["keyword"]))
+    # concurrents du suivi pas encore explorés
+    count = defaultdict(int)
+    for r in db.q("SELECT s.domain FROM serp s JOIN keywords k ON k.id = s.keyword_id "
+                  "WHERE k.project_id=? AND s.date = (SELECT MAX(date) FROM serp "
+                  "WHERE keyword_id = s.keyword_id)", (pid,)):
+        if not is_mine(r["domain"], project):
+            count[r["domain"]] += 1
+    todo = [d for d, _ in sorted(count.items(), key=lambda x: (-x[1], x[0])) if d not in explored][:12]
+    return render_template("market.html", project=project, tab="market", by=by, show_all=show_all,
+                           rows=rows, comps=comps, explored=explored, todo=todo, count=count,
+                           nprobed=len(data), xstatus=explore.STATUS.get(pid),
+                           engine=default_engine(), top=tracker.MAX_RESULTS)
 
 
 CANNIB_DAYS = 30        # fenêtre d'analyse
@@ -564,8 +746,8 @@ def audit(pid):
         for p in pages:
             n[p["status"] or 0] += 1
         stats = {"total": len(pages), "c200": n[200], "c301": n[301], "c302": n[302],
-                 "c404": n[404],
-                 "other": len(pages) - n[200] - n[301] - n[302] - n[404]}
+                 "c403": n[403], "c404": n[404],
+                 "other": len(pages) - n[200] - n[301] - n[302] - n[403] - n[404]}
         problems = sorted((p for p in pages if p["status"] != 200),
                           key=lambda p: (p["status"] or 999, p["url"]))
         for r in db.q("SELECT l.target, l.source FROM links l JOIN pages p ON p.crawl_id = "
@@ -576,7 +758,9 @@ def audit(pid):
     return render_template("audit.html", project=project, tab="audit", crawls=crawls,
                            current=current, pages=shown[:1000], npages=len(shown), code=code,
                            issues=issues, stats=stats, problems=problems[:500],
-                           nproblems=len(problems), sources=sources, status=status)
+                           nproblems=len(problems), sources=sources, status=status,
+                           fixes=crawler.FIX, link_issues=crawler.LINK_ISSUES,
+                           by_url={p["url"]: p for p in problems})
 
 
 @app.post("/p/<int:pid>/crawl")

@@ -74,11 +74,11 @@ def read_site(competitor):
     return pages
 
 
-def run(project, competitor, engine):
+def run(project, competitor, engine, queue=None):
     """Prévu pour tourner dans un thread."""
     pid = project["id"]
     st = STATUS[pid] = {"running": True, "phase": "Lecture du site concurrent", "done": 0,
-                        "total": 0, "error": None, "competitor": competitor}
+                        "total": 0, "error": None, "competitor": competitor, "queue": queue}
     try:
         known = {r["keyword"] for r in db.q("SELECT keyword FROM keywords WHERE project_id=?", (pid,))}
         cands = candidates(read_site(competitor), competitor, known)
@@ -100,6 +100,10 @@ def run(project, competitor, engine):
                     st["error"] = f"Arrêt après 3 échecs consécutifs (blocage probable) : {e}"
                     return
                 continue
+            db.x("DELETE FROM probe_serp WHERE project_id=? AND keyword=?", (pid, kw))
+            db.xmany("INSERT OR REPLACE INTO probe_serp(project_id, keyword, date, position, url, domain) "
+                     "VALUES(?,?,?,?,?,?)",
+                     [(pid, kw, today, i, u, tracker.host_of(u)) for i, u in enumerate(urls, 1)])
             my_pos, my_url = tracker.find_position(urls, project["domain"])
             c_pos, c_url = tracker.find_position(urls, competitor)
             db.x("INSERT OR REPLACE INTO gap_probe(project_id, competitor, keyword, date, my_pos, "
@@ -112,3 +116,11 @@ def run(project, competitor, engine):
         st["error"] = str(e)
     finally:
         st["running"] = False
+
+
+def run_many(project, competitors, engine):
+    """Explore plusieurs concurrents à la suite ; s'arrête au premier blocage."""
+    for i, comp in enumerate(competitors, 1):
+        run(project, comp, engine, queue=(i, len(competitors)))
+        if STATUS[project["id"]]["error"]:
+            break

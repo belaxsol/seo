@@ -55,6 +55,7 @@
   {% else %}
   {% if xstatus and xstatus.error and xstatus.competitor == comp %}<p class="down">{{ xstatus.error }}</p>{% endif %}
   <form method="post" action="{{ url_for('gap_explore', pid=project.id) }}">
+    <input type="hidden" name="back" value="gap">
     <input type="hidden" name="c" value="{{ comp }}">
     <button>{{ 'Relancer l\'exploration' if probed.c else 'Explorer ' ~ comp }}</button>
     {% if probed.c %}<span class="muted">Dernière exploration : {{ probed.d }}, {{ probed.c }} mots-clés testés.</span>{% endif %}

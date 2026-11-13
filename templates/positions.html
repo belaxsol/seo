@@ -92,7 +92,7 @@
     <td class="num">
       {% if not r.last %}<span class="muted">–</span>
       {% elif r.last.position is none %}<span class="muted">hors top {{ top }}</span>
-      {% else %}<b>{{ '%g' % r.last.position }}</b>{% endif %}
+      {% else %}{% set q = r.last.position %}<span class="pos {{ 'p1' if q <= 3 else 'p2' if q <= 10 else 'p3' if q <= 20 else 'p4' }}">{{ '%g' % q }}</span>{% endif %}
     </td>
     <td class="num">{{ delta(r.d1) }}</td>
     <td class="num">{{ delta(r.d7) }}</td>

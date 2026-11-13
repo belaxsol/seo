@@ -30,6 +30,11 @@ CREATE TABLE IF NOT EXISTS gap_probe(
   competitor TEXT NOT NULL, keyword TEXT NOT NULL, date TEXT NOT NULL,
   my_pos INTEGER, my_url TEXT, comp_pos INTEGER, comp_url TEXT,
   PRIMARY KEY(project_id, competitor, keyword));
+CREATE TABLE IF NOT EXISTS probe_serp(
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  keyword TEXT NOT NULL, date TEXT NOT NULL, position INTEGER NOT NULL,
+  url TEXT NOT NULL, domain TEXT NOT NULL,
+  PRIMARY KEY(project_id, keyword, position));
 CREATE TABLE IF NOT EXISTS kw_ideas(
   id INTEGER PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

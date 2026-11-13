@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block head %}{% if status.running %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
+{% block body %}
+<div class="dash-head">
+  <div>
+    <h1>Tableau de bord</h1>
+    <p class="muted lead">{{ project.domain }} · {{ ntotal }} mots-clés suivis · {{ ndates }} jour{{ 's' if ndates > 1 }} de relevés</p>
+  </div>
+  <div class="seg" role="group" aria-label="Période">
+    {% for d, l in [(7,'7 j'),(30,'30 j'),(90,'90 j'),(365,'1 an')] %}
+    <a href="{{ url_for('dashboard', pid=project.id, days=d) }}" class="{{ 'on' if days == d }}">{{ l }}</a>
+    {% endfor %}
+  </div>
+  <form method="post" action="{{ url_for('check', pid=project.id) }}">
+    <button {{ 'disabled' if status.running or not ntotal }}>Relever maintenant</button>
+  </form>
+</div>
+{% if status.running %}<div class="flash">Relevé en cours : {{ status.done }} / {{ status.total }} mots-clés…</div>{% endif %}
+
+{% if not kpis %}
+<div class="empty">
+  <b>Pas encore de données.</b>
+  <p>Ajoutez des mots-clés dans l'onglet <a href="{{ url_for('positions', pid=project.id) }}">Positions</a> : le suivi démarre tout de suite et ce tableau se remplit.</p>
+</div>
+{% else %}
+<div class="dash-kpis">
+  {% for k in kpis %}
+  <div class="kpi2" title="{{ k.hint }}">
+    <div class="lbl">{{ k.label }}</div>
+    <div class="val"><b>{{ '%g' % k.value }}</b><small>{{ k.unit }}</small>
+      {% if k.diff %}<span class="chg {{ 'up' if k.good else 'down' }}">{{ '▲' if k.diff > 0 else '▼' }} {{ '%g' % (k.diff|abs) }}</span>
+      {% elif k.diff == 0 %}<span class="chg muted">=</span>{% endif %}</div>
+    <div class="spark" data-v="{{ k.spark|tojson|forceescape }}"></div>
+  </div>
+  {% endfor %}
+</div>
+<p class="muted small-inline" style="margin:-4px 0 12px">Évolutions comparées au relevé d'il y a 7 jours (ou au plus ancien disponible).</p>
+
+<div class="dash">
+  <section class="panel span8">
+    <h2>Évolution de votre position moyenne <a href="{{ url_for('positions', pid=project.id, days=days) }}">Détail par mot-clé →</a></h2>
+    <p class="muted small-inline" style="margin:-6px 0 6px">Tous les mots mis ensemble : un mot non classé compte pour 100. La courbe qui <b>monte</b> = vous progressez.</p>
+    <div id="trend"></div>
+    <script>lineChart(document.getElementById('trend'), {{ trend|tojson }}, {height: 230, invert: true, max: 100});</script>
+  </section>
+
+  <section class="panel span4">
+    <h2>Répartition des positions</h2>
+    <div class="dist">{% for d in dist %}{% if d.n %}<i class="{{ d.cls }}" style="width:{{ (100 * d.n / ntotal)|round(1) }}%" title="{{ d.label }} : {{ d.n }}"></i>{% endif %}{% endfor %}</div>
+    {% for d in dist %}
+    <div class="dist-row"><i class="{{ d.cls }}"></i><span>{{ d.label }}</span><b>{{ d.n }}</b></div>
+    {% endfor %}
+  </section>
+
+  <section class="panel span6 good">
+    <h2>Vos progressions <span class="muted small-inline">vs 7 j</span></h2>
+    {% if winners %}
+    <ul class="list">
+      {% for v in winners %}<li><span class="up">▲ {{ '%g' % v.d }}</span><a class="grow" href="{{ url_for('positions', pid=project.id, kw=v.k.id) }}">{{ v.k.keyword }}</a><span class="pos">{{ '%g' % v.pos if v.pos else '–' }}</span></li>{% endfor %}
+    </ul>
+    {% else %}<p class="muted">Pas encore de progression à montrer : il faut au moins deux relevés.</p>{% endif %}
+    {% if losers %}
+    <details class="soft"><summary>{{ losers|length }} baisse{{ 's' if losers|length > 1 }} à surveiller</summary>
+      <ul class="list">
+        {% for v in losers %}<li><span class="chg-soft">▼ {{ '%g' % (-v.d) }}</span><a class="grow" href="{{ url_for('positions', pid=project.id, kw=v.k.id) }}">{{ v.k.keyword }}</a><span class="pos">{{ '%g' % v.pos if v.pos else '–' }}</span></li>{% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+  </section>
+
+  <section class="panel span6">
+    <h2>À une marche du top 10 <span class="muted small-inline">positions 11 à 20</span></h2>
+    {% if near %}
+    <ul class="list">
+      {% for v in near %}<li><a class="grow" href="{{ url_for('positions', pid=project.id, kw=v.k.id) }}">{{ v.k.keyword }}<div class="sub">{{ v.url or '' }}</div></a><span class="pos">{{ '%g' % v.pos }}</span></li>{% endfor %}
+    </ul>
+    <p class="muted more">Ce sont les plus faciles à faire monter : un peu de contenu et de maillage interne suffisent souvent.</p>
+    {% else %}<p class="muted">Aucun mot-clé entre la 11<sup>e</sup> et la 20<sup>e</sup> place.</p>{% endif %}
+  </section>
+
+  <section class="panel span6">
+    <h2>Concurrents <a href="{{ url_for('competitors', pid=project.id) }}">Voir tout →</a></h2>
+    {% if rivals %}
+    {% for r in rivals %}
+    <div class="bar-row">
+      <a class="name" href="{{ url_for('gap', pid=project.id, c=r.domain) }}" title="Voir les écarts avec {{ r.domain }}">{{ r.domain }}</a>
+      <div class="meter"><i style="width:{{ r.share }}%"></i></div>
+      <span class="muted">{{ r.n }}/{{ nkw }} · moy. {{ r.avg }}</span>
+    </div>
+    {% endfor %}
+    <p class="muted more">Part de vos mots-clés où le domaine apparaît dans le top {{ top }}.</p>
+    {% else %}<p class="muted">Pas encore de pages de résultats relevées.</p>{% endif %}
+  </section>
+
+  <section class="panel span6">
+    <h2>Opportunités <a href="{{ url_for('gap', pid=project.id) }}">Écarts →</a></h2>
+    {% if opps %}
+    <ul class="list">
+      {% for o in opps %}<li><a class="grow" href="{{ url_for('positions', pid=project.id, kw=o.k.id) }}">{{ o.k.keyword }}<div class="sub">{{ o.rival }} est en {{ o.rpos }}</div></a>
+        <span class="pos">{{ '%g' % o.me if o.me else '–' }}</span></li>{% endfor %}
+    </ul>
+    <p class="muted more">Mots-clés où un concurrent est dans le top 5 et vous au-delà du top 10{% if nopps > opps|length %} ({{ nopps }} au total){% endif %}.</p>
+    {% else %}<p class="muted">Aucun écart important : vous êtes dans le top 10 là où un concurrent est dans le top 5.</p>{% endif %}
+  </section>
+
+  <section class="panel span6">
+    <h2>Audit du site <a href="{{ url_for('audit', pid=project.id) }}">Détail →</a></h2>
+    {% if site %}
+    <div class="mini-stats">
+      <a href="{{ url_for('audit', pid=project.id, crawl=site.crawl.id) }}#pages"><b>{{ site.pages }}</b><span>pages crawlées</span></a>
+      <a class="{{ 'bad' if site.c404 else 'ok' }}" href="{{ url_for('audit', pid=project.id, crawl=site.crawl.id, code=404) }}#pages"><b>{{ site.c404 }}</b><span>404 à corriger</span></a>
+    </div>
+    {% if site.c403 or site.other %}<p class="muted more">Aussi : {{ site.c403 }} en 403, {{ site.other }} autre{{ 's' if site.other > 1 }} erreur{{ 's' if site.other > 1 }} (5xx, injoignables).</p>{% endif %}
+    {% if site.broken %}
+    <ul class="list">
+      {% for p in site.broken %}<li><span class="down">404</span><a class="grow" href="{{ url_for('audit', pid=project.id, crawl=site.crawl.id, code=404) }}#pages">{{ p.url }}</a><span class="muted">{{ p.inlinks or 0 }} lien{{ 's' if (p.inlinks or 0) > 1 }}</span></li>{% endfor %}
+    </ul>
+    {% if site.c404 > site.broken|length %}<p class="muted more">… et {{ site.c404 - site.broken|length }} autres.</p>{% endif %}
+    {% else %}<div class="status-card"><span class="ico">✓</span>Aucune page en 404 sur le dernier crawl.</div>{% endif %}
+    <p class="muted more">Dernier crawl : {{ site.crawl.started|replace('T',' ') }}.</p>
+    {% else %}
+    <p class="muted">Aucun crawl pour l'instant. <a href="{{ url_for('audit', pid=project.id) }}">Lancer un audit du site</a> pour repérer les pages en 404 et les redirections.</p>
+    {% endif %}
+  </section>
+
+  <section class="panel span6">
+    <h2>Cannibalisation <a href="{{ url_for('cannibalisation', pid=project.id) }}">Détail →</a></h2>
+    {% if alternating %}
+    <div class="status-card bad"><span class="ico">⚠</span>{{ alternating|length }} mot{{ 's' if alternating|length > 1 }}-clé{{ 's' if alternating|length > 1 }} où Google hésite entre plusieurs de vos pages :
+      {% for k in alternating[:3] %}{{ k.keyword }}{{ ', ' if not loop.last }}{% endfor %}</div>
+    {% else %}
+    <div class="status-card"><span class="ico">✓</span>Aucune cannibalisation détectée : la page classée est stable sur vos mots-clés.</div>
+    {% endif %}
+    {% if multi %}<p class="muted more">{{ multi }} mot{{ 's' if multi > 1 }}-clé{{ 's' if multi > 1 }} ont plusieurs pages classées, ce qui n'est pas un problème tant que la page classée ne change pas.</p>{% endif %}
+  </section>
+</div>
+<script>document.querySelectorAll('.spark').forEach(e => sparkline(e, JSON.parse(e.dataset.v)));</script>
+{% endif %}
+{% endblock %}

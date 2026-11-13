@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block head %}{% if xstatus and xstatus.running %}<meta http-equiv="refresh" content="10">{% endif %}{% endblock %}
+{% block body %}
+<div class="dash-head">
+  <div>
+    <h1>Mots-clés concurrents</h1>
+    <p class="muted lead">Mots-clés repérés sur les pages de vos concurrents, avec leur position et la vôtre.
+      Chaque mot-clé testé montre <b>tous</b> les domaines classés dessus.</p>
+  </div>
+  <div class="seg" role="group" aria-label="Vue">
+    <a href="{{ url_for('market', pid=project.id, by='kw', all=1 if show_all else None) }}" class="{{ 'on' if by == 'kw' }}">Par mot-clé</a>
+    <a href="{{ url_for('market', pid=project.id, by='comp', all=1 if show_all else None) }}" class="{{ 'on' if by == 'comp' }}">Par concurrent</a>
+  </div>
+</div>
+
+{% if xstatus and xstatus.running %}
+<div class="flash"><b>{{ xstatus.phase }}</b> pour {{ xstatus.competitor }}{% if xstatus.total %} : {{ xstatus.done }} / {{ xstatus.total }}{% endif %}{% if xstatus.queue %} (concurrent {{ xstatus.queue[0] }} sur {{ xstatus.queue[1] }}){% endif %}. La page se rafraîchit toute seule.</div>
+{% elif xstatus and xstatus.error %}<div class="flash down">{{ xstatus.error }}</div>{% endif %}
+
+<form method="post" action="{{ url_for('gap_explore', pid=project.id) }}" class="panel" style="margin:14px 0">
+  <input type="hidden" name="back" value="market">
+  <h2>Explorer d'autres concurrents</h2>
+  <p class="muted small-inline" style="margin:0 0 8px">Déjà explorés : {{ explored|sort|join(', ') if explored else 'aucun' }}.
+    Chaque concurrent coûte environ 25 requêtes Google (4 à 5 minutes).</p>
+  {% if todo %}
+  <div class="row">
+    {% for d in todo %}<label class="check"><input type="checkbox" name="c" value="{{ d }}"> {{ d }} <span class="muted">({{ count[d] }})</span></label>{% endfor %}
+  </div>
+  <button {{ 'disabled' if xstatus and xstatus.running }}>Explorer les concurrents cochés</button>
+  {% else %}<p class="muted">Tous vos concurrents principaux ont déjà été explorés, ou aucun relevé n'est disponible.</p>{% endif %}
+</form>
+
+{% if not nprobed %}
+<div class="empty"><b>Aucune exploration pour l'instant.</b>
+  <p>Cochez un ou plusieurs concurrents ci-dessus : l'outil lit leurs pages et relève les mots-clés qu'il y trouve.</p></div>
+{% else %}
+<div class="bar">
+  <p class="muted grow" style="margin:0">{{ nprobed }} mots-clés testés
+    {% if show_all %}· tous affichés{% else %}· ceux où vous êtes déjà dans le top 10 sont masqués{% endif %}.</p>
+  <a class="btn ghost" href="{{ url_for('market', pid=project.id, by=by, all=None if show_all else 1) }}">{{ 'Masquer ceux où je suis dans le top 10' if show_all else 'Tout afficher' }}</a>
+</div>
+
+<form method="post" action="{{ url_for('keywords_add', pid=project.id) }}">
+  <input type="hidden" name="engine" value="{{ engine }}">
+  {% if by == 'kw' %}
+  <table>
+    <tr><th></th><th>Mot-clé</th><th class="num">Vous</th><th class="num">Concurrents classés</th><th>Qui est dessus</th></tr>
+    {% for r in rows %}
+    <tr>
+      <td>{% if not r.tracked %}<input type="checkbox" name="kw" value="{{ r.keyword }}">{% else %}<span class="muted" title="Déjà suivi">✓</span>{% endif %}</td>
+      <td>{{ r.keyword }}</td>
+      <td class="num">{% if r.me %}<b>{{ r.me }}</b>{% else %}<span class="muted">hors top {{ top }}</span>{% endif %}</td>
+      <td class="num">{{ r.rivals|length }}{% if r.top10 %} <span class="muted">({{ r.top10 }} dans le top 10)</span>{% endif %}</td>
+      <td>
+        <details><summary>{{ r.rivals[0][0] }} en {{ r.rivals[0][1][0] }}{% if r.rivals|length > 1 %} et {{ r.rivals|length - 1 }} autre{{ 's' if r.rivals|length > 2 }}{% endif %}</summary>
+          <ul class="list">
+            {% for dom, (p, u) in r.rivals %}<li><span class="pos">{{ p }}</span><a class="grow" href="{{ u }}" target="_blank" rel="noopener">{{ dom }}<div class="sub">{{ u }}</div></a></li>{% endfor %}
+          </ul>
+        </details>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  {% for dom, lst in comps %}
+  <section class="panel" style="margin:12px 0">
+    <h2><span>{{ dom }} {% if dom in explored %}<em class="tag alt">exploré</em>{% endif %}</span>
+      <span class="muted small-inline">{{ lst|length }} mot{{ 's' if lst|length > 1 }}-clé{{ 's' if lst|length > 1 }}</span></h2>
+    <ul class="list">
+      {% for x in lst %}<li>
+        <span class="pos" title="Sa position">{{ x.pos }}</span>
+        <a class="grow" href="{{ x.url }}" target="_blank" rel="noopener">{{ x.keyword }}<div class="sub">{{ x.url }}</div></a>
+        <span class="muted">vous : {{ x.me if x.me else 'hors top ' ~ top }}</span></li>{% endfor %}
+    </ul>
+  </section>
+  {% endfor %}
+  {% endif %}
+  <div class="sticky"><button>Ajouter les mots-clés cochés au suivi</button></div>
+</form>
+{% endif %}
+{% endblock %}

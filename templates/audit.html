@@ -38,9 +38,9 @@
 
 {% if current %}
 <div class="stats">
-  {% for label, key, c in [('URL au total','total',none),('en 200','c200',200),('en 301','c301',301),('en 302','c302',302),('en 404','c404',404)] %}
+  {% for label, key, c in [('URL au total','total',none),('en 200','c200',200),('en 301','c301',301),('en 302','c302',302),('en 403','c403',403),('en 404','c404',404)] %}
   <a href="{{ url_for('audit', pid=project.id, crawl=current.id, code=c) }}#pages" class="{{ 'sel' if code == c and c is not none }}">
-    <b class="{{ 'down' if key == 'c404' and stats[key] }}">{{ stats[key] }}</b><span>{{ label }}</span></a>
+    <b class="{{ 'down' if key in ('c403', 'c404') and stats[key] }}">{{ stats[key] }}</b><span>{{ label }}</span></a>
   {% endfor %}
   <div><b>{{ stats.other }}</b><span>autres codes</span></div>
 </div>
@@ -76,8 +76,30 @@
 {% for sev, label, urls in issues %}
 <details class="issue">
   <summary><span class="sev {{ sev }}">{{ sev }}</span> {{ label }} <b>{{ urls|length }}</b></summary>
+  {% if fixes.get(label) %}<p class="fix"><b>Que faire :</b> {{ fixes[label] }}</p>{% endif %}
+  {% if label in link_issues %}
+  <div class="scroll"><table class="flat">
+    <tr><th>URL cassée</th>{% if 'Redirections' in label %}<th>Redirige vers</th>{% endif %}<th class="num">Liens entrants</th><th>À corriger dans ces pages</th></tr>
+    {% for u in urls[:200] %}
+    {% set p = by_url.get(u) %}{% set src = sources.get(u) %}
+    <tr>
+      <td class="url"><a href="{{ u }}" target="_blank" rel="noopener">{{ u }}</a></td>
+      {% if 'Redirections' in label %}<td class="url">{{ p.redirect_to if p and p.redirect_to else '' }}</td>{% endif %}
+      <td class="num">{{ p.inlinks if p and p.inlinks is not none else '–' }}</td>
+      <td class="url">
+        {% if src %}{% for s in src[:8] %}<div><a href="{{ s }}" target="_blank" rel="noopener">{{ s }}</a></div>{% endfor %}
+          {% if src|length > 8 %}<div class="muted">… et {{ src|length - 8 }} autre{{ 's' if src|length > 9 }}</div>{% endif %}
+        {% elif current.source != 'crawl' and p and p.inlinks %}<span class="muted">détail absent de l'export</span>
+        {% else %}<span class="muted">aucune page ne pointe ici (atteinte via redirection ou sitemap)</span>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  {% if urls|length > 200 %}<p class="muted">… et {{ urls|length - 200 }} autres (voir le tableau ci-dessus).</p>{% endif %}
+  {% else %}
   <ul>{% for u in urls[:300] %}<li><a href="{{ u }}" target="_blank" rel="noopener">{{ u }}</a></li>{% endfor %}
   {% if urls|length > 300 %}<li class="muted">… et {{ urls|length - 300 }} autres</li>{% endif %}</ul>
+  {% endif %}
 </details>
 {% endfor %}
 {% else %}<p class="muted">Aucun problème détecté par les règles actuelles.</p>{% endif %}
