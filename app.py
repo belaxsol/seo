@@ -19,6 +19,7 @@ from flask import (Flask, Response, abort, flash, redirect, render_template, req
 
 import crawler
 import db
+import explore
 import importers
 import providers
 import tracker
@@ -222,6 +223,69 @@ def competitors(pid):
     rows.sort(key=lambda r: (-r["nkw"], r["avg"]))
     return render_template("competitors.html", project=project, tab="competitors",
                            rows=rows[:60], nkw=nkw, top=tracker.MAX_RESULTS)
+
+
+@app.route("/p/<int:pid>/gap")
+def gap(pid):
+    """Keyword gap : sur les mots-clés suivis, où un concurrent est devant vous (ou vous êtes absent)."""
+    project = get_project(pid)
+    serp = defaultdict(dict)  # mot-clé -> {domaine: (meilleure position, url)}
+    for r in db.q("SELECT s.keyword_id, s.domain, s.position, s.url FROM serp s "
+                  "JOIN keywords k ON k.id = s.keyword_id WHERE k.project_id=? AND s.date = "
+                  "(SELECT MAX(date) FROM serp WHERE keyword_id = s.keyword_id) "
+                  "ORDER BY s.position", (pid,)):
+        serp[r["keyword_id"]].setdefault(r["domain"], (r["position"], r["url"]))
+    mine = {kid: min((v for d, v in doms.items() if is_mine(d, project)), default=None)
+            for kid, doms in serp.items()}
+    count = defaultdict(int)
+    for kid, doms in serp.items():
+        for d in doms:
+            if not is_mine(d, project):
+                count[d] += 1
+    rivals = sorted(count, key=lambda d: (-count[d], d))[:30]
+    comp = request.args.get("c") or (rivals[0] if rivals else None)
+    kws = {k["id"]: k for k in db.q("SELECT id, keyword, engine FROM keywords WHERE project_id=?", (pid,))}
+    rows = []
+    for kid, doms in serp.items():
+        if comp not in doms:
+            continue
+        cpos, curl = doms[comp]
+        me = mine[kid]
+        if me is not None and me[0] <= cpos:
+            continue  # vous êtes devant : pas un écart
+        rows.append({"k": kws[kid], "me": me, "cpos": cpos, "curl": curl,
+                     "gain": (tracker.MAX_RESULTS + 1 - cpos) if me is None else me[0] - cpos})
+    # absents d'abord, puis le plus gros retard
+    rows.sort(key=lambda r: (r["me"] is not None, -r["gain"], r["k"]["keyword"]))
+    ahead = sum(1 for kid, doms in serp.items() if comp in doms and
+                (mine[kid] is None or mine[kid][0] > doms[comp][0]))
+    probes = []
+    for r in db.q("SELECT * FROM gap_probe WHERE project_id=? AND competitor=? AND comp_pos IS NOT NULL "
+                  "ORDER BY keyword", (pid, comp)):
+        if r["my_pos"] is None or r["my_pos"] > r["comp_pos"]:
+            probes.append(r)
+    probes.sort(key=lambda r: (r["my_pos"] is not None, r["comp_pos"]))
+    probed = db.one("SELECT COUNT(*) c, MAX(date) d FROM gap_probe WHERE project_id=? AND competitor=?",
+                    (pid, comp))
+    return render_template("gap.html", project=project, tab="gap", rows=rows, rivals=rivals,
+                           probes=probes, probed=probed, xstatus=explore.STATUS.get(pid),
+                           engine=default_engine(),
+                           count=count, comp=comp, shared=count.get(comp, 0), ahead=ahead,
+                           top=tracker.MAX_RESULTS)
+
+
+@app.post("/p/<int:pid>/gap/explore")
+def gap_explore(pid):
+    project = get_project(pid)
+    comp = request.form.get("c", "").strip()
+    if not comp:
+        abort(400)
+    if explore.STATUS.get(pid, {}).get("running") or tracker.STATUS["running"]:
+        flash("Un relevé est déjà en cours : attendez la fin avant d'explorer un concurrent.")
+    else:
+        threading.Thread(target=explore.run, args=(project, comp, default_engine()), daemon=True).start()
+        time.sleep(0.3)
+    return redirect(url_for("gap", pid=pid, c=comp))
 
 
 CANNIB_DAYS = 30        # fenêtre d'analyse

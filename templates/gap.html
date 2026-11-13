@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="bar">
+  <div class="grow">
+    <h1>Écarts avec un concurrent</h1>
+    <p class="muted lead">Parmi vos mots-clés suivis, ceux où le concurrent choisi est classé <b>devant</b>
+      <b>{{ project.domain }}</b>, ou ceux où vous n'apparaissez pas dans le top {{ top }}.
+      Seuls vos mots-clés suivis sont analysés : l'outil ne connaît pas les autres mots-clés du concurrent.</p>
+  </div>
+</div>
+
+{% if not rivals %}
+<p class="muted">Pas encore de données : la liste se remplit après le premier relevé de positions.</p>
+{% else %}
+<form method="get" class="inline">
+  <label>Concurrent
+    <select name="c" onchange="this.form.submit()">
+      {% for d in rivals %}<option value="{{ d }}" {{ 'selected' if d == comp }}>{{ d }} ({{ count[d] }} mots-clés)</option>{% endfor %}
+    </select>
+  </label>
+  <noscript><button>Afficher</button></noscript>
+</form>
+
+<div class="kpis">
+  <div class="kpi"><span>Mots-clés où {{ comp }} est classé</span><b>{{ shared }}</b></div>
+  <div class="kpi {{ 'bad' if ahead }}"><span>Il est devant vous</span><b>{{ ahead }}</b></div>
+</div>
+
+{% if rows %}
+<table>
+  <tr><th>Mot-clé</th><th class="num">Votre position</th><th class="num">{{ comp }}</th><th class="num">Retard</th><th>Sa page</th></tr>
+  {% for r in rows %}
+  <tr>
+    <td><a href="{{ url_for('positions', pid=project.id, kw=r.k.id) }}">{{ r.k.keyword }}</a></td>
+    <td class="num">{% if r.me %}<b>{{ r.me[0] }}</b>{% else %}<span class="muted">hors top {{ top }}</span>{% endif %}</td>
+    <td class="num"><b>{{ r.cpos }}</b></td>
+    <td class="num">{% if r.me %}<span class="down">{{ r.gain }} place{{ 's' if r.gain > 1 }}</span>{% else %}<span class="muted">absent</span>{% endif %}</td>
+    <td class="url"><a href="{{ r.curl }}" target="_blank" rel="noopener">{{ r.curl }}</a></td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="muted">Sur les mots-clés où {{ comp }} est classé, vous êtes toujours devant lui.</p>
+{% endif %}
+
+<section class="card">
+  <h2>Explorer les mots-clés de {{ comp }}</h2>
+  <p class="muted">L'outil lit une vingtaine de pages de {{ comp }}, en tire des mots-clés candidats (titres et H1)
+    puis relève leur position pour vous et pour lui. Ce sont des <b>candidats</b>, pas ses vrais mots-clés :
+    aucun volume de recherche. Jusqu'à 50 requêtes {{ engine }}, comptez quelques minutes.</p>
+  {% if xstatus and xstatus.running %}
+  <p><b>{{ xstatus.phase }}</b> pour {{ xstatus.competitor }}{% if xstatus.total %} : {{ xstatus.done }} / {{ xstatus.total }}{% endif %}.
+    La page se rafraîchit toute seule.</p>
+  <meta http-equiv="refresh" content="10">
+  {% else %}
+  {% if xstatus and xstatus.error and xstatus.competitor == comp %}<p class="down">{{ xstatus.error }}</p>{% endif %}
+  <form method="post" action="{{ url_for('gap_explore', pid=project.id) }}">
+    <input type="hidden" name="c" value="{{ comp }}">
+    <button>{{ 'Relancer l\'exploration' if probed.c else 'Explorer ' ~ comp }}</button>
+    {% if probed.c %}<span class="muted">Dernière exploration : {{ probed.d }}, {{ probed.c }} mots-clés testés.</span>{% endif %}
+  </form>
+  {% endif %}
+
+  {% if probed.c %}
+  {% if probes %}
+  <form method="post" action="{{ url_for('keywords_add', pid=project.id) }}">
+    <input type="hidden" name="engine" value="{{ engine }}">
+    <table>
+      <tr><th></th><th>Mot-clé candidat</th><th class="num">Votre position</th><th class="num">{{ comp }}</th><th>Sa page</th></tr>
+      {% for r in probes %}
+      <tr>
+        <td><input type="checkbox" name="kw" value="{{ r.keyword }}"></td>
+        <td>{{ r.keyword }}</td>
+        <td class="num">{% if r.my_pos %}<b>{{ r.my_pos }}</b>{% else %}<span class="muted">hors top {{ top }}</span>{% endif %}</td>
+        <td class="num"><b>{{ r.comp_pos }}</b></td>
+        <td class="url"><a href="{{ r.comp_url }}" target="_blank" rel="noopener">{{ r.comp_url }}</a></td>
+      </tr>
+      {% endfor %}
+    </table>
+    <button>Ajouter les mots-clés cochés au suivi</button>
+  </form>
+  {% else %}
+  <p class="muted">Parmi les {{ probed.c }} candidats testés, aucun où {{ comp }} est classé devant vous.</p>
+  {% endif %}
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

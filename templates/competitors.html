@@ -8,7 +8,7 @@
       <th class="num">Top 3</th><th class="num">Top 10</th></tr>
   {% for r in rows %}
   <tr class="{{ 'me' if r.me }}">
-    <td>{{ r.domain }}</td><td class="num">{{ r.nkw }}</td><td class="num">{{ r.share }} %</td>
+    <td>{% if r.me %}{{ r.domain }}{% else %}<a href="{{ url_for('gap', pid=project.id, c=r.domain) }}" title="Voir les mots-clés où il est devant vous">{{ r.domain }}</a>{% endif %}</td><td class="num">{{ r.nkw }}</td><td class="num">{{ r.share }} %</td>
     <td class="num">{{ r.avg }}</td><td class="num">{{ r.top3 }}</td><td class="num">{{ r.top10 }}</td>
   </tr>
   {% endfor %}
